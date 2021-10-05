@@ -1,0 +1,32 @@
+<web-app xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns="http://java.sun.com/xml/ns/javaee"
+  xsi:schemaLocation="http://java.sun.com/xml/ns/javaee
+                      http://java.sun.com/xml/ns/javaee/web-app_3_0.xsd"
+  version="3.0"
+  metadata-complete="true">
+
+  <servlet>
+    <servlet-name>aq2status</servlet-name>
+    <servlet-class>aq2status.ServletMain</servlet-class>
+  </servlet>
+
+  <servlet-mapping>
+    <servlet-name>aq2status</servlet-name>
+    <url-pattern>/aq2status</url-pattern>
+  </servlet-mapping>
+
+  <servlet>
+    <servlet-name>aq2ws</servlet-name>
+    <servlet-class>aq2ws.tomcat356</servlet-class>
+    <init-param>
+        <param-name>dburl-testdb1</param-name>
+        <param-value>/testdb1</param-value>
+    </init-param>
+    <init-param>
+        <param-name>enabletcp</param-name>
+        <param-value>1</param-value>
+    </init-param>
+    <load-on-startup>100</load-on-startup>
+  </servlet>
+
+</web-app>
