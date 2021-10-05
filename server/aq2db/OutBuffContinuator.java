@@ -1,0 +1,41 @@
+/*
+ * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ *
+ * This file is provided under the terms of the GNU General Public
+ * License version 2. Please see LICENSE file at the uppermost 
+ * level of the repository.
+ * 
+ * Unless required by applicable law or agreed to in writing, this
+ * software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
+ * OF ANY KIND.
+ *
+ */
+package aq2db;
+
+
+public interface OutBuffContinuator {
+
+    public int getFullSizeX();
+
+    public void ForceXByte();
+
+    public int getPos();
+
+    public byte getEditedByte();
+
+    public void EnsureOfs(long _seg_ofs) throws Exception;
+
+    public int ReadTo(byte[] buff, int ofs, int count);
+
+    public boolean withTrailingStatus();
+
+    public void close();
+
+    public boolean PleaseWait();
+
+    public boolean WithWarning();
+
+    public void AddUser();
+
+}
+
