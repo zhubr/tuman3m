@@ -1,0 +1,2 @@
+id=001, tact=500, DataStart=10.0, Calibr=3.0, Zeroline=0.0, Type=Single, data=txt:"$_1.txt"
+id=002, tact=500, DataStart=10.0, Calibr=3.0, Zeroline=0.0, Type=Single, data=bin:"$_2.bin"
