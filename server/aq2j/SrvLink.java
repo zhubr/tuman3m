@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -969,6 +969,48 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
     }
 
 
+    private void Process_ReqFiles(byte thrd_ctx, byte[] req_body, int req_trailing_len) throws Exception {
+
+        if (dbLink == null) {
+            Tum3Logger.DoLog(db_name, true, "Internal error: no dbLink in Process_ReqFiles." + " Session: " + DebugTitle());
+            throw new Exception("no dbLink in Process_ReqFiles");
+        }
+
+        ByteBuffer tmpBB = ByteBuffer.wrap(req_body);
+        tmpBB.limit(req_trailing_len);
+        tmpBB.order(ByteOrder.LITTLE_ENDIAN);
+
+        String tmp_file_names = "";
+        try {
+            StringBuffer tmp_buff = new StringBuffer();
+            while (tmpBB.position() < req_trailing_len) tmp_buff.append((char)tmpBB.get());
+            tmp_file_names = tmp_buff.toString();
+        } catch (Exception e) {
+            Tum3Logger.DoLog(db_name, true, "WARNING: unexpected format request in Process_ReqFiles() ignored." + " Session: " + DebugTitle());
+        }
+
+        //System.out.println("[aq2j] DEBUG: Process_ReqFiles(): <" + tmp_file_names +">");
+        StringList tmp_req_file_names = new StringList(tmp_file_names.split("\r\n"));
+        if (tmp_req_file_names.size() > 0) {
+
+            int tmp_size = 0;
+            ByteArrayOutputStreamX temp_storage = new ByteArrayOutputStreamX();
+            Tum3CollateralUpdateHelper.LoadPerRequestTo(db_name, temp_storage, tmp_req_file_names);
+
+            OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
+            tmpBuff.InitSrvReply(REQUEST_TYPE_MISC_FETCH, temp_storage.size(), temp_storage.size());
+            tmpBuff.putStream(temp_storage);
+            try {
+                PutBuff(thrd_ctx, tmpBuff, null);
+            } catch (Exception e) {
+                tmpBuff.CancelData();
+                throw e;
+            }
+        }
+
+    }
+
+
     private void Process_GetMiscInfos(byte thrd_ctx, byte[] req_body, int req_trailing_len) throws Exception {
 
         if (!WasAuthorized) {
@@ -1774,7 +1816,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
         //if (tmp_ev_type == ev.DB_EV_NEWSHOT) System.out.println("[DEBUG] AddGeneralEvent: " + ev.get_str() + " in " + db_name);
 
-        if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && (origin_db != dbLink) && (origin_db != dbLink.GetMasterDb())) return; // Special case: do not accept DB_EV_NEWSHOT from slave to master.
+        if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && (origin_db != dbLink) /* && (origin_db != dbLink.GetMasterDb()) */ ) return; // YYY Special case: never allow DB_EV_NEWSHOT between master/slave directly.
 
         if (RCompatVersion == 0) { // This is a legacy acquisition node (most probably).
             if ((tmp_ev_type == ev.DB_EV_TALK) 
@@ -1783,7 +1825,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
                     || (tmp_ev_type == ev.DB_EV_TRACEUPD_ARR)
                     || (tmp_ev_type == ev.DB_EV_TRACEDEL_ARR)
                     ) return;
-            if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && ((FFeatureSelectWord & 1) == 0)) return;
+            if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && ((FFeatureSelectWord & 1) == 0) || (ev.get_int() == ev.IS_MASTER_ONLY)) return; // YYY
         }
         if (tmp_ev_type == ev.DB_EV_TALK) {
             boolean tmp_match = false;
@@ -1859,6 +1901,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         else if (REQUEST_TYPE_TRACECALL == req_code) Process_GetTrace(thrd_ctx, req_body, req_trailing_len, false);
         else if (REQUEST_TYPE_REFUSE    == req_code) Process_GetTrace(thrd_ctx, req_body, req_trailing_len, true);
         else if (REQUEST_TYPE_CONFIGSCALL == req_code) Process_GetConfigs(thrd_ctx, req_body, req_trailing_len);
+        else if (REQUEST_TYPE_REQUIEST_FILES == req_code) Process_ReqFiles(thrd_ctx, req_body, req_trailing_len); 
         else if (REQUEST_TYPE_GET_MISC == req_code) Process_GetMiscInfos(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_CONFIGSSAVE == req_code) Process_ConfigsSave(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_DENSITY_UPD == req_code) Process_DensitySave(thrd_ctx, req_body, req_trailing_len);

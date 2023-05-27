@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -77,6 +77,7 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_AGENT_INFO = (byte)0x8D;
 
     public final static byte REQUEST_TYPE_TRIG_ALLOW = (byte)0xA9;
+    public final static byte REQUEST_TYPE_REQUIEST_FILES = (byte)0xAA;
 
     // Aq-2 codes.
     public final static byte dcRmtReply_1  =  1; // Standard cmd final reply.
@@ -121,6 +122,7 @@ public interface TumProtoConsts
     public final static byte tum3misc_file_overwrite = 1;
     public final static byte tum3misc_file_no_overwrite = 2;
     public final static byte tum3misc_userlist = 4;
+    public final static byte tum3misc_file_per_request = 5;
 
     public final static String TUM3_KEYWORD_users = "users";
     public final static String TUM3_KEYWORD_files = "files";

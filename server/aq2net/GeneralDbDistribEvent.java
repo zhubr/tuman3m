@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -29,9 +29,11 @@ public class GeneralDbDistribEvent {
     public final static int ID_WAS_WAITING = (1 << 30);
     public final static int ID_MASK = 0x1FFFFFFF;
 
+    public final static int IS_MASTER_ONLY = 1;
+
     private int ev_type;
     private String ev_str;
-    private int ev_int;
+    private int ev_int = 0; // YYY
     private int[] ev_int_ar;
     private ByteBuffer ev_bb;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -30,8 +30,10 @@ public class Tum3CollateralUpdateHelper {
 
     private final static String TUM3_collateral_overwrite_path = "collateral_overwrite_path";
     private final static String TUM3_collateral_no_overwrite_path = "collateral_no_overwrite_path";
+    private final static String TUM3_collateral_per_request_path = "collateral_per_request_path"; // YYY
     private String Path_overwrite = Tum3cfg.getGlbParValue(TUM3_collateral_overwrite_path);
     private String Path_no_overwrite = Tum3cfg.getGlbParValue(TUM3_collateral_no_overwrite_path);
+    private String Path_per_request = Tum3cfg.getGlbParValue(TUM3_collateral_per_request_path); // YYY
 
 
     private static class LazyCollateralHolder {
@@ -46,7 +48,13 @@ public class Tum3CollateralUpdateHelper {
 
     }
 
-    private void LoadCategory(String _DbName, int _type_code, String _path, ByteArrayOutputStream _storage) {
+    public static void LoadPerRequestTo(String _DbName, ByteArrayOutputStream storage, StringList wanted_files) {
+
+        LazyCollateralHolder.Instance.internal_LoadPerRequestTo(_DbName, storage, wanted_files);
+
+    }
+
+    private void LoadCategory(String _DbName, int _type_code, String _path, ByteArrayOutputStream _storage, StringList wanted_files) {
 
         File tmp_dir = new File(_path);
         if (tmp_dir.isDirectory()) {
@@ -54,12 +62,31 @@ public class Tum3CollateralUpdateHelper {
             byte[] tmp_arr = null;
             ByteBuffer tmp_buff = null;
             File[] dir_files = tmp_dir.listFiles();
+            StringList tmp_work_list = new StringList(); // YYY
 
-            for (File tmp_file: dir_files)
-                if (tmp_file.isFile() && (tmp_file.getName().length() >= 3) && (tmp_file.length() <= MAX_COLLATERAL_FILE)) {
-                    int tmp_brutto_size = 4 + 4 + 4*tmp_file.getName().length() + 4 + (int)tmp_file.length();
-                    if (max_size < tmp_brutto_size) max_size = tmp_brutto_size;
-                }
+            if (TumProtoConsts.tum3misc_file_per_request == _type_code) {
+
+              for (String tmp_name: wanted_files) {
+                  File tmp_file = new File(_path + File.separator + tmp_name); // YYY
+                  if (tmp_file.isFile() && (tmp_file.getName().length() >= 3) && (tmp_file.length() <= MAX_COLLATERAL_FILE)) {
+                      int tmp_brutto_size = 4 + 4 + 4*tmp_file.getName().length() + 4 + (int)tmp_file.length();
+                      if (max_size < tmp_brutto_size) max_size = tmp_brutto_size;
+                  }
+	          tmp_work_list.add(tmp_file.getName()); // YYY
+              }
+ 
+            } else {
+
+              for (File tmp_file: dir_files)
+                  if (tmp_file.isFile() && (tmp_file.getName().length() >= 3) && (tmp_file.length() <= MAX_COLLATERAL_FILE)) {
+                      int tmp_brutto_size = 4 + 4 + 4*tmp_file.getName().length() + 4 + (int)tmp_file.length();
+                      if (max_size < tmp_brutto_size) max_size = tmp_brutto_size;
+                  }
+
+              for (File tmp_file: dir_files)
+                  if (tmp_file.isFile() && (tmp_file.getName().length() >= 3) && (tmp_file.length() <= max_size))
+	            tmp_work_list.add(tmp_file.getName()); // YYY
+	    }
 
             if (max_size > 0) {
                 tmp_arr = new byte[max_size];
@@ -67,9 +94,10 @@ public class Tum3CollateralUpdateHelper {
                 tmp_buff.order(ByteOrder.LITTLE_ENDIAN);
             }
 
-            for (File tmp_file: dir_files)
+            for (String tmp_name: tmp_work_list) {
+                File tmp_file = new File(_path + File.separator + tmp_name); // YYY
                 if (tmp_file.isFile() && (tmp_file.getName().length() >= 3) && (tmp_file.length() <= max_size)) {
-                    String tmp_name = tmp_file.getName();
+                    //String tmp_name = tmp_file.getName();
                     //System.out.println("[aq2j] DEBUG: found collateral: '" + tmp_name + "'");
                     FileInputStream fis = null;
                     try { 
@@ -97,7 +125,26 @@ public class Tum3CollateralUpdateHelper {
                         } catch (Exception e) {
                             Tum3Logger.DoLog(_DbName, false, "WARNING: collateral file close error in '" + tmp_name + "' with: " + e);
                         }
+                } else {  /* Just send as empty */
+
+                    try { 
+                        int tmp_file_size = 0;
+                        byte[] tmp_raw_name = Tum3Util.StringToBytesRaw(tmp_name);
+                        tmp_buff.clear();
+                        tmp_buff.putInt(_type_code);
+                        tmp_buff.putInt(tmp_raw_name.length);
+                        tmp_buff.put(tmp_raw_name);
+                        tmp_buff.putInt(tmp_file_size);
+
+                        int tmp_filled = tmp_buff.position(), tmp_len = 0;
+                        _storage.write(tmp_arr, 0, tmp_filled);
+
+                    } catch (Exception e) {
+                        Tum3Logger.DoLog(_DbName, false, "WARNING: collateral file read error in '" + tmp_name + "' with: " + e);
+                    }
+
                 }
+            }
         }
     }
 
@@ -105,13 +152,22 @@ public class Tum3CollateralUpdateHelper {
 
         //System.out.println("[aq2j] Tum3CollateralUpdateHelper.internal_LoadAllTo()");
         try {
-            if (!Path_overwrite.isEmpty()) LoadCategory(_DbName, TumProtoConsts.tum3misc_file_overwrite, Path_overwrite, storage);
-            if (!Path_no_overwrite.isEmpty()) LoadCategory(_DbName, TumProtoConsts.tum3misc_file_no_overwrite, Path_no_overwrite, storage);
+            if (!Path_overwrite.isEmpty()) LoadCategory(_DbName, TumProtoConsts.tum3misc_file_overwrite, Path_overwrite, storage, null);
+            if (!Path_no_overwrite.isEmpty()) LoadCategory(_DbName, TumProtoConsts.tum3misc_file_no_overwrite, Path_no_overwrite, storage, null);
         } catch (Exception e) {
             Tum3Logger.DoLog(_DbName, true, "WARNING: collateral file processing exception: " + Tum3Util.getStackTrace(e));
         }
 
     }
 
+    private void internal_LoadPerRequestTo(String _DbName, ByteArrayOutputStream storage, StringList wanted_files) {
+
+        try {
+            if (!Path_per_request.isEmpty()) LoadCategory(_DbName, TumProtoConsts.tum3misc_file_per_request, Path_per_request, storage, wanted_files);
+        } catch (Exception e) {
+            Tum3Logger.DoLog(_DbName, true, "WARNING: collateral file request processing exception: " + Tum3Util.getStackTrace(e));
+        }
+
+    }
 
 }

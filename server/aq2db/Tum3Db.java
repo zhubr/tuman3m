@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -44,8 +44,10 @@ public class Tum3Db implements Runnable, AppStopHook {
     private StringList MasterList = null;
     private Object MasterListLock = new Object(), PostCreationLock = new Object();
     private boolean creation_complete = false;
+    private String FAutoCreatedMonthDir = ""; // YYY
 
     private HashMap<String, Tum3Shot> openShots, closingShots;
+    private ArrayList<String> FGlobalShotList = new ArrayList<String>(); // YYY
 
     private int db_index;
     private String db_name, masterdb_name;
@@ -197,11 +199,13 @@ public class Tum3Db implements Runnable, AppStopHook {
 
         File dir = new File(DB_ROOT_PATH + tmpSubdirName + File.separator);
         //System.out.println("[aq3j] Checking if exists: " + DB_ROOT_PATH + tmpSubdirName + File.separator);
+        FAutoCreatedMonthDir = ""; // YYY
         if (dir.exists() && dir.isDirectory()) {
             //System.out.println("[aq3j] Yes, exists.");
         } else {
             //System.out.println("[aq3j] No, does not.");
             if (!dir.mkdir()) throw new Exception("Failed to create month directory.");
+            FAutoCreatedMonthDir = tmpSubdirName; // YYY
             //System.out.println("[aq3j] Created.");
         }
 
@@ -234,6 +238,25 @@ public class Tum3Db implements Runnable, AppStopHook {
 
         //return "18010203";
 
+    }
+
+    public void CleanupMonthDir() {
+
+        if (!Tum3cfg.isWriteable(db_index)) return;
+        if (FAutoCreatedMonthDir.isEmpty()) return;
+        String tmp_dest_dir = FAutoCreatedMonthDir;
+        FAutoCreatedMonthDir = ""; // Immediately cleanup dir name to only allow one attempt of cleanup.
+        try {
+            File dir = new File(DB_ROOT_PATH + tmp_dest_dir + File.separator);
+            //System.out.println("[aq3j] Checking if exists: " + DB_ROOT_PATH + tmp_dest_dir + File.separator);
+            if (dir.exists() && dir.isDirectory()) {
+                //System.out.println("[aq3j] Yes, exists.");
+                if (dir.listFiles().length == 0) {
+                    //System.out.println("[aq3j] Is empty, should delete.");
+                    dir.delete(); // YYY
+                }
+            }
+        } catch (Exception ignored) { }
     }
 
     public final static boolean ShotNumLocal(String the_num) {
@@ -303,10 +326,10 @@ public class Tum3Db implements Runnable, AppStopHook {
     private StringList GetRawSubdir(String tmpSubdirName) {
 
         StringList tmp_list = new StringList();
-
         if (DB_ROOT_PATH.length() > 0) {
             File dir = new File(DB_ROOT_PATH + tmpSubdirName + File.separator);
             File tmp_files[] = dir.listFiles();
+//Tum3Util.SleepExactly(3000);
             //System.out.println("[DEBUG] + tmpSubdirName=" + tmpSubdirName);
             if (null == tmp_files) {
                 // Reminder: the directory is empty or non-existent at this time. Assume there are no files in it anyway.
@@ -603,7 +626,51 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    public void RegisterNewShot(String _new_shot_num) { // YYY
+
+        FAutoCreatedMonthDir = ""; // YYY  As soon as some shot triggered, we likely do not want to cleanup month directory anymore.
+        synchronized(FGlobalShotList) { FGlobalShotList.add(_new_shot_num); }
+
+    }
+
+    private int LastShotId_int() {
+
+        synchronized(FGlobalShotList) { return FGlobalShotList.size() - 1; }
+
+    }
+
+    public static int LastShotId(int _db_idx) {
+
+        Tum3Db tmp_inst = getDbInstance(_db_idx, true);
+        return tmp_inst.LastShotId_int();
+
+    }
+
+    private String GetShotNumber_int(int _shot_id) {
+
+        synchronized(FGlobalShotList) { 
+          if ((_shot_id >= 0) && (_shot_id < FGlobalShotList.size()))
+            return FGlobalShotList.get(_shot_id);
+          else
+            return "";
+        }
+
+    }
+
+    public static String GetShotNumber(int _db_idx, int _shot_id) {
+
+        Tum3Db tmp_inst = getDbInstance(_db_idx, true);
+        return tmp_inst.GetShotNumber_int(_shot_id);
+
+    }
+
     public static Tum3Db getDbInstance(int _db_idx) {
+
+        return getDbInstance(_db_idx, false);
+
+    }
+
+    public static Tum3Db getDbInstance(int _db_idx, boolean _no_create) {
 
         Tum3Db tmp_inst = null, tmp_master_inst = null;
         String tmp_warning_msg1 = "", tmp_warning_msg2 = "";
@@ -614,6 +681,7 @@ public class Tum3Db implements Runnable, AppStopHook {
                 DbInstance = new Tum3Db[Tum3cfg.getGlbInstance().getDbCount()];
 
             tmp_inst = DbInstance[_db_idx];
+            if (_no_create) return tmp_inst; // YYY
             if (tmp_inst == null) {
                 tmp_inst = createInstance(_db_idx, getCfgMasterDb(_db_idx));
                 DbInstance[_db_idx] = tmp_inst;
