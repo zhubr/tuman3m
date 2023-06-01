@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -29,6 +29,7 @@ public class Tum3cfg {
     public  final static String TUM3_CFG_tcp_enabled = "tcp_enabled";
     private final static String TUM3_CFG_shutdown_timeout = "shutdown_timeout";
     private final static String TUM3_CFG_is_writeable = "is_writeable";
+    private final static String TUM3_CFG_is_commentable = "is_commentable"; // YYY
     public  final static String TUM3_CFG_hotstart_path = "hotstart_path";
     private final static int CONST_DEF_SHUTDOWN_TIMEOUT = 2500;
 
@@ -219,6 +220,10 @@ public class Tum3cfg {
 
     public static boolean isWriteable(int _db_idx) {
         return "1".equals(getParValue(_db_idx, true, TUM3_CFG_is_writeable, "0").trim());
+    }
+
+    public static boolean isCommentable(int _db_idx) {
+        return "1".equals(getParValue(_db_idx, true, TUM3_CFG_is_commentable, "0").trim());
     }
 
     public static boolean isGlbWriteable() {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -38,6 +38,8 @@ public class Tum3Perms {
     private final static int CONST_PERMN_ACQUIS   = 16;
     private final static int CONST_PERMN_UPLOAD   = 32;
     private final static int CONST_PERMN_HOTSTART = 64;
+    private final static int CONST_PERMN_DO_UGC = 128;
+    private final static int CONST_PERMN_ADD_TAGS = 256;
 
 
     private int PermsHolder = 0;
@@ -54,7 +56,9 @@ public class Tum3Perms {
         density(CONST_PERMN_DENSITY),
         acquis(CONST_PERMN_ACQUIS),
         upload(CONST_PERMN_UPLOAD),
-        hotstart(CONST_PERMN_HOTSTART);
+        hotstart(CONST_PERMN_HOTSTART),
+        commenting(CONST_PERMN_DO_UGC),
+        addtag(CONST_PERMN_ADD_TAGS);
 
         private int perm_as_number;
 
@@ -81,6 +85,8 @@ public class Tum3Perms {
     public boolean isAdmin() { return (PermsHolder & CONST_PERMN_ADMIN) != 0; }
     public boolean isSignListEditingAllowed() { return (PermsHolder & (CONST_PERMN_SIGNLIST | CONST_PERMN_ADMIN)) != 0; }
     public boolean isDensityEditingAllowed() { return (PermsHolder & (CONST_PERMN_DENSITY| CONST_PERMN_ADMIN)) != 0; }
+    public boolean isCommentingAllowed() { return (PermsHolder & (CONST_PERMN_DO_UGC| CONST_PERMN_ADMIN)) != 0; }
+    public boolean isAddTagAllowed() { return (PermsHolder & (CONST_PERMN_ADD_TAGS| CONST_PERMN_ADMIN)) != 0; }
     public boolean isHotstartUploadAllowed() { return (PermsHolder & (CONST_PERMN_HOTSTART| CONST_PERMN_ADMIN)) != 0; }
     public boolean isAcquisControlAllowed() { return (PermsHolder & (CONST_PERMN_ACQUIS| CONST_PERMN_ADMIN)) != 0; }
     public boolean isSignalUploadAllowed(int _id) {

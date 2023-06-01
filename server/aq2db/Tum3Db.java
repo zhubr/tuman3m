@@ -52,6 +52,7 @@ public class Tum3Db implements Runnable, AppStopHook {
     private int db_index;
     private String db_name, masterdb_name;
     private Tum3Db master_db = null;
+    private Tum3UgcWorker ugc_worker = null; // YYY
 
 
     protected Tum3Db(int _db_idx, String _masterdb_name) {
@@ -89,6 +90,7 @@ public class Tum3Db implements Runnable, AppStopHook {
         synchronized(PostCreationLock) {
             if (!creation_complete) {
                 creation_complete = true;
+                ugc_worker = Tum3UgcWorker.getUgcWorker(this); // YYY
                 Tum3Logger.DoLog(db_name, false, "DEBUG: Starting database '" + db_name + "' (data_path=" + DB_ROOT_PATH + ", data_path_volatile=" + DB_ROOT_PATH_VOL + ")");
                 Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_SHOTS_MAX_OPEN=" + CONST_SHOTS_MAX_OPEN);
                 Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_SHOTS_DISPOSE_AFTER=" + CONST_SHOTS_DISPOSE_AFTER);
@@ -410,6 +412,18 @@ public class Tum3Db implements Runnable, AppStopHook {
         // and then raises an exception that propagates out.
 
         return tmpShot;
+
+    }
+
+    public String UpdateUgcData(byte thrd_ctx, String UserName, boolean UserCanAddTags, UgcReplyHandler the_link, int _req_id, String _shot_name, byte[] _upd_arr) throws Exception {
+
+        return ugc_worker.UpdateUgcData(thrd_ctx, the_link, UserName, UserCanAddTags, _req_id, _shot_name, _upd_arr);
+
+    }
+
+    public String GetUgcData(byte thrd_ctx, UgcReplyHandler the_link, int _req_id, String _shot_name) throws Exception {
+
+        return ugc_worker.GetUgcData(thrd_ctx, the_link, _req_id, _shot_name);
 
     }
 

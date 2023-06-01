@@ -63,7 +63,7 @@ class ReqTraceListClass extends ArrayList<TraceRequest> {
 class PendingTraceListStrings extends ArrayList<String> {
 }
 
-public class SrvLink implements TumProtoConsts, SrvLinkIntf, aq3sender {
+public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq3sender {
 
     private final static String CONST_MSG_SRVLINK_ERR01 = "Internal error opening shot name";
     private final static String CONST_MSG_SRVLINK_ERR02 = "Internal error locating shot name";
@@ -517,6 +517,62 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, aq3sender {
     private String AuthorizedLoginPlus() {
 
         return AuthorizedLogin + "." + db_name;
+
+    }
+
+    private String UpdateUgcData(byte thrd_ctx, String _shot_num, int _req_id, byte[] _upd_arr) throws Exception {
+
+        String tmp_err_msg = "Unspecified error";
+
+        if (AuthorizedLogin.isEmpty())
+            tmp_err_msg = "No username found for UGC update";
+        else {
+
+            if (Tum3cfg.isCommentable(db_index)) {
+
+                boolean tmp_granted = false;
+                if (UserPermissions != null) if (UserPermissions.isCommentingAllowed()) tmp_granted = true;
+                if (tmp_granted) {
+                    tmp_err_msg = dbLink.UpdateUgcData(thrd_ctx, AuthorizedLogin, UserPermissions.isAddTagAllowed(), this, _req_id, _shot_num, _upd_arr);
+                } else {
+                    tmp_err_msg = dbLink.CONST_MSG_ACCESS_DENIED;
+                }
+
+            } else {
+                tmp_err_msg = dbLink.CONST_MSG_READONLY_NOW;
+            }
+        }
+
+        return tmp_err_msg; // YYY
+
+    }
+
+    public void GenerateUgcReply(byte thrd_ctx, int _req_id, String _shot_name, String _err_msg, byte[] data) throws Exception {
+
+        GenerateUgcReplyIntl(thrd_ctx, _req_id, _shot_name, _err_msg, data);
+
+    }
+
+    public void GenerateUgcReply(int _req_id, String _shot_name, String _err_msg, byte[] data) throws Exception {
+
+        GenerateUgcReplyIntl(THRD_EXTERNAL, _req_id, _shot_name, _err_msg, data); // This will likely not work yet.
+
+    }
+
+    private void GenerateUgcReplyIntl(byte thrd_ctx, int _req_id, String _shot_name, String _err_msg, byte[] data) throws Exception {
+
+        int tmp_trailing_count = 0;
+        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
+        String tmp_err_str255 = Str255(_err_msg);
+        if (null != data) tmp_trailing_count = data.length;
+        tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP,
+                4 + _shot_name.length() + 1 + tmp_err_str255.length() + 1 + tmp_trailing_count,
+                4 + _shot_name.length() + 1 + tmp_err_str255.length() + 1 + tmp_trailing_count);
+        tmpBuff.putPasString(_shot_name);
+        tmpBuff.putInt(_req_id);
+        tmpBuff.putPasString(tmp_err_str255);
+        if (tmp_trailing_count > 0) tmpBuff.putBytes(data);
+        PutBuff(thrd_ctx, tmpBuff, null);
 
     }
 
@@ -1157,7 +1213,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
         String tmp_result = "Density save failed.";
 
-        String tmp_attempted_shot = "(none)";
+        String tmp_attempted_shot = "(unknown)";
         int    tmp_attempted_id = 0;
 
         try {
@@ -1174,7 +1230,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             tmpBB.get(tmp_upd_arr);
             tmp_attempted_shot = tmp_shot_name.toString();
             tmp_attempted_id = tmp_str_len;
-            tmp_result = UpdateDensityData(tmp_shot_name.toString(), tmp_str_len, tmp_upd_arr);
+            tmp_result = UpdateDensityData(tmp_attempted_shot, tmp_attempted_id, tmp_upd_arr); // YYY
 
         } catch (Exception e) {
             Tum3Logger.DoLog(db_name, true, "WARNING: unexpected format request in Process_DensitySave() ignored. " + " Session: " + DebugTitle() + " (" + Tum3Util.getStackTrace(e) + ")");
@@ -1182,12 +1238,63 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         }
 
         String tmp_comment_txt = tmp_result;
-        if (tmp_result.isEmpty()) tmp_comment_txt = "success";
-        Tum3Logger.DoLog(db_name, false, "Density update by " + DebugTitle() + " with result: " + tmp_comment_txt);
+        boolean tmp_save_ok = tmp_result.isEmpty(); // YYY
+        if (tmp_save_ok) tmp_comment_txt = "success";
+        if (!tmp_save_ok) { // YYY
+          Tum3Logger.DoLog(db_name, false, "Density update (in shot " + tmp_attempted_shot + " id " + tmp_attempted_id + ") by " + DebugTitle() + " with result: " + tmp_comment_txt);
+          _NewMessageBoxCompat(thrd_ctx, tmp_result, false);
+        }
+    }
 
-        if (tmp_result.length() > 0)
-            _NewMessageBoxCompat(thrd_ctx, tmp_result, false);
+    private void Process_Ugc(byte thrd_ctx, byte[] req_body, int req_trailing_len) throws Exception {
 
+        if (dbLink == null) {
+            Tum3Logger.DoLog(db_name, true, "Internal error: no dbLink in Process_Ugc." + " Session: " + DebugTitle());
+            throw new Exception("no dbLink in Process_Ugc");
+        }
+
+        ByteBuffer tmpBB = ByteBuffer.wrap(req_body);
+        tmpBB.limit(req_trailing_len);
+        tmpBB.order(ByteOrder.LITTLE_ENDIAN);
+
+        String tmp_result = "Ugc request failed.";
+
+        String tmp_attempted_shot = "(unknown)";
+        int    tmp_attempted_id = 0;
+
+        try {
+            int tmp_str_len = tmpBB.get();
+            if ((tmp_str_len > 20) || ((tmpBB.position()+tmp_str_len+4) > req_trailing_len)) throw new Exception("[aq2j] WARNING: invalid name length in Process_Ugc()");
+            StringBuffer tmp_shot_name = new StringBuffer();
+            for (int tmp_i=0; tmp_i < tmp_str_len; tmp_i++) tmp_shot_name.append((char)tmpBB.get()); // XXX FIXME! Simplify this.
+            if ((tmpBB.position()+4) > req_trailing_len) throw new Exception("[aq2j] WARNING: invalid request found in Process_Ugc()");
+            int tmp_req_id = tmpBB.getInt();
+            //System.out.println("[DEBUG] tmp_req_id=" + tmp_req_id + ", position=" + tmpBB.position() + ", req_trailing_len=" + req_trailing_len);
+            if (((tmp_req_id < 1) || (tmp_req_id > 2000000)) && (tmp_req_id != -1) && (tmp_req_id != -3)) throw new Exception("[aq2j] WARNING: invalid request id in Process_Ugc()");
+            if (((tmp_req_id >= -1) && (tmp_str_len < 7)) || ((tmp_req_id == -3) && (tmp_str_len != 0))) throw new Exception("[aq2j] WARNING: invalid name length in Process_Ugc()"); // YYY
+            int tmp_body_size = req_trailing_len - tmpBB.position();
+            byte[] tmp_upd_arr = new byte[tmp_body_size];
+            tmpBB.get(tmp_upd_arr);
+            tmp_attempted_shot = tmp_shot_name.toString();
+            tmp_attempted_id = tmp_req_id;
+            if ((-1 == tmp_attempted_id) || (-3 == tmp_attempted_id)) {
+//System.out.println("[DEBUG] Ugc request shot <" + tmp_attempted_shot + "> id " + tmp_attempted_id);
+                tmp_result = dbLink.GetUgcData(thrd_ctx, this, tmp_attempted_id, tmp_attempted_shot);
+            } else {
+//System.out.println("[DEBUG] Ugc update in shot " + tmp_attempted_shot + " id " + tmp_attempted_id);
+              tmp_result = UpdateUgcData(thrd_ctx, tmp_attempted_shot, tmp_attempted_id, tmp_upd_arr);
+            }
+
+        } catch (Exception e) {
+            Tum3Logger.DoLog(db_name, true, "WARNING: unexpected format request in Process_Ugc() ignored. " + " Session: " + DebugTitle() + " (" + Tum3Util.getStackTrace(e) + ")");
+            tmp_result = "Ugc save failed with: " + e;
+        }
+
+        if (!tmp_result.isEmpty()) GenerateUgcReplyIntl(thrd_ctx, tmp_attempted_id, tmp_attempted_shot, tmp_result, null); // YYY
+
+        String tmp_comment_txt = tmp_result;
+        if (!tmp_result.isEmpty())
+          Tum3Logger.DoLog(db_name, false, "Ugc request by " + DebugTitle() + " with result: " + tmp_comment_txt);
     }
 
     private void _NewMessageBoxCompat(byte thrd_ctx, String the_text, boolean _with_logger) throws Exception {
@@ -1392,7 +1499,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
                 //QueueUploadResult(UploadHeader.ShotName, UploadHeader.SignalId, errstr);
 
-                OutgoingBuff tmpBuff = tmpBuff = GetBuff(thrd_ctx, ctx);
+                OutgoingBuff tmpBuff = GetBuff(thrd_ctx, ctx); // YYY
                 String tmp_err_str255 = Str255(tmp_errstr);
                 tmpBuff.InitSrvReply(REQUEST_TYPE_TRACEUPLOADACK, 4 + tmp_shot_name.length() + 1 + tmp_err_str255.length() + 1,
                         4 + tmp_shot_name.length() + 1 + tmp_err_str255.length() + 1);
@@ -1451,7 +1558,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
                     Tum3Logger.DoLog(db_name, false, "Failed deleting " + tmp_shot_name + "." + tmp_signal_id + " from " + DebugTitle() + ": " + tmp_errstr);
                 tmp_log_done = true;
 
-                OutgoingBuff tmpBuff = tmpBuff = GetBuff(thrd_ctx, ctx);
+                OutgoingBuff tmpBuff = GetBuff(thrd_ctx, ctx);
                 String tmp_err_str255 = Str255(tmp_errstr);
                 tmpBuff.InitSrvReply(REQUEST_TYPE_TRACEUPLOADACK, 4 + tmp_shot_name.length() + 1 + tmp_err_str255.length() + 1,
                         4 + tmp_shot_name.length() + 1 + tmp_err_str255.length() + 1);
@@ -1750,6 +1857,24 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
                 tmpBuff.putInt(0);
                 PutBuff(thrd_ctx, tmpBuff, null);
                 //System.out.println("[DEBUG] REQUEST_TYPE_TRACEINVALIDATEONE <" + tmpMsg + "> in " + db_name + " sent OK.");
+            } else if (tmp_ev_type == tmpEv.DB_EV_UGC_SHOT_UPD) {
+                String tmpMsg = tmpEv.get_str();
+                tmpBuff = GetBuff(thrd_ctx, null);
+                if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
+                tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP, 4 + tmpMsg.length() + 1 + 0 + 1, 4 + tmpMsg.length() + 1 + 0 + 1);
+                tmpBuff.putPasString(tmpMsg);
+                tmpBuff.putInt(-2);
+                tmpBuff.putPasString("");
+                PutBuff(thrd_ctx, tmpBuff, null);
+                //System.out.println("[DEBUG] REQUEST_TYPE_UGC_REP <" + tmpMsg + "> in " + db_name + " sent OK.");
+            } else if (tmp_ev_type == tmpEv.DB_EV_UGC_LIST_UPD) { // YYY
+                tmpBuff = GetBuff(thrd_ctx, null);
+                tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP, 4 + 0 + 1 + 0 + 1, 4 + 0 + 1 + 0 + 1);
+                tmpBuff.putPasString("");
+                tmpBuff.putInt(tmpEv.get_int());
+                tmpBuff.putPasString("");
+                PutBuff(thrd_ctx, tmpBuff, null);
+                //System.out.println("[DEBUG] REQUEST_TYPE_UGC_REP in " + db_name + " sent OK.");
             } else if ((tmp_ev_type == tmpEv.DB_EV_TRACEUPD) || (tmp_ev_type == tmpEv.DB_EV_TRACEUPD_ARR) || (tmp_ev_type == tmpEv.DB_EV_TRACEDEL_ARR)) {
                 int tmp_id = 0, tmp_id_count = 1;
                 int[] tmp_ids = null;
@@ -1901,10 +2026,11 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         else if (REQUEST_TYPE_TRACECALL == req_code) Process_GetTrace(thrd_ctx, req_body, req_trailing_len, false);
         else if (REQUEST_TYPE_REFUSE    == req_code) Process_GetTrace(thrd_ctx, req_body, req_trailing_len, true);
         else if (REQUEST_TYPE_CONFIGSCALL == req_code) Process_GetConfigs(thrd_ctx, req_body, req_trailing_len);
-        else if (REQUEST_TYPE_REQUIEST_FILES == req_code) Process_ReqFiles(thrd_ctx, req_body, req_trailing_len); 
+        else if (REQUEST_TYPE_REQUEST_FILES == req_code) Process_ReqFiles(thrd_ctx, req_body, req_trailing_len); 
         else if (REQUEST_TYPE_GET_MISC == req_code) Process_GetMiscInfos(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_CONFIGSSAVE == req_code) Process_ConfigsSave(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_DENSITY_UPD == req_code) Process_DensitySave(thrd_ctx, req_body, req_trailing_len);
+        else if (REQUEST_TYPE_UGC_REQ == req_code) Process_Ugc(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_TALKMSG == req_code) Process_TalkMsg(req_body, req_trailing_len);
         else if (REQUEST_TYPE_TALKMSGX == req_code) Process_TalkMsgX(req_body, req_trailing_len);
         else if (REQUEST_TYPE_FLEX_TXT == req_code) Process_FlexTxtReq(thrd_ctx, req_body, req_trailing_len);

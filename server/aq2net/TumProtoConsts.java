@@ -51,6 +51,9 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_AQ3_REQ = (byte)0x91;
     public final static byte REQUEST_TYPE_GET_MISC = (byte)0xA1;
     public final static byte REQUEST_TYPE_TALKMSGX = (byte)0xA3;
+    public final static byte REQUEST_TYPE_AGENT_INFO = (byte)0x8D;
+    public final static byte REQUEST_TYPE_UGC_REQ = (byte)0xAB;
+    public final static byte REQUEST_TYPE_REQUEST_FILES = (byte)0xAA;
 
     // Reply codes.
     public final static byte REQUEST_TYPE_AVAILVERSION = (byte)0x7C;
@@ -73,11 +76,12 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_DENSITY_UPD = (byte)0x98;
     public final static byte REQUEST_TYPE_INFORMATION_TEXT = (byte)0x99;
     public final static byte REQUEST_TYPE_MISC_FETCH = (byte)0xA2;
-
-    public final static byte REQUEST_TYPE_AGENT_INFO = (byte)0x8D;
-
     public final static byte REQUEST_TYPE_TRIG_ALLOW = (byte)0xA9;
-    public final static byte REQUEST_TYPE_REQUIEST_FILES = (byte)0xAA;
+    public final static byte REQUEST_TYPE_UGC_REP = (byte)0xAC;
+
+    // Special IDs
+    public final static int CONST_ID_LIST_ALL = -1;
+    public final static int CONST_ID_SHOT_HDR = -2;
 
     // Aq-2 codes.
     public final static byte dcRmtReply_1  =  1; // Standard cmd final reply.

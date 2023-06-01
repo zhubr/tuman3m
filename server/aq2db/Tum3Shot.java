@@ -1493,8 +1493,8 @@ public class Tum3Shot {
         //System.out.println("[aq2j] DEBUG: searching signal in '" + shotName + "' id=" + thisSignalId + " Valid=" + Valid + " NotStored=" + NotStored + " is_new=" + is_new);
         if (!Valid || NotStored || (0 == thisSignalId)) return null;
 
-        if (-1 == thisSignalId) return PackAvailableSignalsList();
-        if (-2 == thisSignalId) return PackShotHeader();
+        if (TumProtoConsts.CONST_ID_LIST_ALL /* -1 */ == thisSignalId) return PackAvailableSignalsList();
+        if (TumProtoConsts.CONST_ID_SHOT_HDR /* -2 */ == thisSignalId) return PackShotHeader();
 
         boolean tmp_is_saving = false, tmp_as_volatile = false, tmp_with_warning = false;
         synchronized(CacheIds) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -16,6 +16,7 @@ package aq2db;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +32,14 @@ public class StringList extends ArrayList<String> {
 
     }
 
+    public StringList dup() {
+
+        StringList tmp_new = new StringList();
+        for (int i = 0; i < size(); i++) tmp_new.add(get(i));
+        return tmp_new;
+
+    }
+
     public StringList() {
 
         super();
@@ -39,7 +48,11 @@ public class StringList extends ArrayList<String> {
 
     public static StringList readFromFile(String file_name) {
 
-        File tmp_file = new File(file_name);
+        return readFromFile(new File(file_name));
+
+    }
+
+    public static StringList readFromFile(File tmp_file) {
 
         StringList results = null; //new StringList();
         FileInputStream tmp_stream = null;
@@ -76,6 +89,30 @@ System.out.println("[DEBUG]: readFromFile: <" + line + "><" + Tum3Util.StrHexDum
         } catch (IOException ignored) { }
 
         return results;
+    }
+
+    public boolean writeToFile(String tmp_name_new) throws Exception {
+
+        return writeToFile(new File(tmp_name_new));
+
+    }
+
+    public boolean writeToFile(File tmp_file) throws Exception {
+
+        boolean tmp_ok = false;
+        FileOutputStream writer = null;
+        try {
+            writer = new FileOutputStream(tmp_file);
+            byte[] tmp_b = Tum3Util.StringToBytesRaw(BuildString());
+            writer.write(tmp_b, 0, tmp_b.length);
+        } finally {
+            if (writer != null) try {
+                writer.close();
+                tmp_ok = true;
+            } catch (Exception ignored) {}
+        }
+        return tmp_ok;
+
     }
 
     public String BuildString() {

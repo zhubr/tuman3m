@@ -25,6 +25,8 @@ public class GeneralDbDistribEvent {
     public final static int DB_EV_TRACEUPD_ARR = 4;
     public final static int DB_EV_TRACEDEL_ARR = 5;
     public final static int DB_EV_USERLIST = 6;
+    public final static int DB_EV_UGC_SHOT_UPD = 7;
+    public final static int DB_EV_UGC_LIST_UPD = 8; // YYY
 
     public final static int ID_WAS_WAITING = (1 << 30);
     public final static int ID_MASK = 0x1FFFFFFF;
@@ -56,6 +58,13 @@ public class GeneralDbDistribEvent {
 
         ev_type = _ev_type;
         ev_str = _ev_str;
+        ev_int = _ev_int;
+
+    }
+
+    public GeneralDbDistribEvent(int _ev_type, int _ev_int) {
+
+        ev_type = _ev_type;
         ev_int = _ev_int;
 
     }

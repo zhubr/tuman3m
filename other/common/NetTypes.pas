@@ -1,5 +1,5 @@
 (*
- * Copyright 2003-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2003-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -101,7 +101,11 @@ const
   REQUEST_TYPE_FLEX_REPL  = $A7;
 
   REQUEST_TYPE_REPORTAVAILVERSION_FULL_64 = $A8;
-  REQUEST_TYPE_TRIG_ALLOW = $A9; { YYY }
+  REQUEST_TYPE_TRIG_ALLOW = $A9;
+
+  REQUEST_TYPE_REQUEST_FILES = $AA;
+  REQUEST_TYPE_UGC_REQ = $AB; { YYY }
+  REQUEST_TYPE_UGC_REP = $AC; { YYY }
 
   DTYPE_SmallInt = 50; { 16-bit, signed integer }
   DTYPE_Single   = 51; { 32-bit, floating point }
@@ -110,6 +114,9 @@ const
   DTYPE_Splines  = 54; { Spline profile evolution }
   DTYPE_Byte     = 55; { 8-bit, unsigned integer }
   DTYPE_System02 = 56; { Reserved for internal use }
+
+  CONST_ID_LIST_ALL = -1;
+  CONST_ID_SHOT_HDR = -2;
 
   RESULT_TRACE_BEGIN = 3;
   RESULT_TRACE_END = 4;
@@ -159,14 +166,16 @@ const
   aq3_async_push_event = 129; { YYY }
 
   { Miscellaneous collateral info type codes. }
-  tum3misc_file_overwrite = 1; { YYY }
-  tum3misc_file_no_overwrite = 2; { YYY }
-  tum3misc_userlist = 4; { YYY }
+  tum3misc_file_overwrite = 1;
+  tum3misc_file_no_overwrite = 2;
+  tum3misc_userlist = 4;
+  tum3misc_file_per_request = 5; { YYY }
 
   FLEXCMD_hotstart = 'hotstart'; { YYY }
 
 
 function DataPointSize(_Dtype: integer): integer;
+function DataTypeIsRegular(_Dtype: integer): boolean;
 
 type
   PGeneralRequest =  ^TGeneralRequest;
@@ -283,7 +292,59 @@ type
     RCompatFlags: longint; { YYY }
   end;
 
+function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUnifiedTraceHeader): double;
+
 implementation
+
+
+function DataTypeIsRegular(_Dtype: integer): boolean;
+begin
+  DataTypeIsRegular := _Dtype in [DTYPE_SmallInt, DTYPE_Single, DTYPE_LongInt, DTYPE_Byte];
+end;
+
+{$IFDEF VER70 }
+type
+  SmallInt = Integer;
+{$ENDIF }
+
+function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUnifiedTraceHeader): double;
+type
+  TSmallIntArr = packed array [0.. 1] of SmallInt;
+  TLongintArr = packed array [0.. 1] of Longint;
+  TSingleArr = packed array [0.. 1] of Single;
+  TByteArr = packed array [0.. 1] of Byte;
+  pSmallintArr = ^TSmallIntArr;
+  pLongintArr = ^TLongintArr;
+  pSingleArr = ^TSingleArr;
+  pByteArr = ^TByteArr;
+var
+  tmpCalibr: single;
+begin
+  if (_data = nil) or (_ph = nil) then
+  begin
+    DataGetAsDouble := -2e100;
+    exit;
+  end;
+  if _ph^.HSize < (7*4) then
+  begin
+    DataGetAsDouble := -3e100;
+    exit;
+  end;
+  tmpCalibr := _ph^.HCalibr;
+  if tmpCalibr = 0 then
+    tmpCalibr := 1;
+  case _ph^.HType of
+    DTYPE_SmallInt: DataGetAsDouble := (pSmallintArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
+    DTYPE_Single:   DataGetAsDouble := (pSingleArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
+    DTYPE_LongInt:  DataGetAsDouble := (pLongintArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
+    DTYPE_Byte:     DataGetAsDouble := (pByteArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
+  else
+    begin
+      DataGetAsDouble := -4e100;
+      exit;
+    end;
+  end;
+end;
 
 
 function DataPointSize(_Dtype: integer): integer;
