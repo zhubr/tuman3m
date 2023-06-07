@@ -1,0 +1,48 @@
+
++--------------------------------------------------------------------------------------------------------+
++------------ File signature ----------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| Fmt Signature     | 4 bytes                    | 54h 55h 4Dh 53h                                       |
++-------------------+----------------------------+-------------------------------------------------------+
++------------ File header -------------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| File Header Size  | 32-bit LE unsigned integer | This header's size in bytes                           |
+| Signal ID         | 32-bit LE unsigned integer | Signal ID                                             |
+| Data Status       | 16-bit LE signed integer   | 0 = data OK, otherwise data not OK                    |
+| hdrShotNameLen    | 8-bit unsigned integer     | Length of shot name                                   |
+| hdrShotName       | 40 bytes                   | Shot name as ascii characters                         |
+| ProgramSubversion | 32-bit LE unsigned integer | Software version that created this file               |
+| wYear             | 16-bit LE unsigned integer | Year when this shot was made                          |
+| wMonth            | 16-bit LE unsigned integer | Month when this shot was made                         |
+| wDay              | 16-bit LE unsigned integer | Day when this shot was made                           |
+| wHour             | 16-bit LE unsigned integer | Hour when this shot was made                          |
+| wMinute           | 16-bit LE unsigned integer | Minute when this shot was made                        |
+| wSecond           | 16-bit LE unsigned integer | Second when this shot was made                        |
+| SigUpdateCounter  | 32-bit LE unsigned integer | reserved, do not use                                  |
++-------------------+----------------------------+-------------------------------------------------------+
++------------ Data header -------------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| Data Header Size  | 32-bit LE unsigned integer | This header's size in bytes                           |
+| HType             | 32-bit LE unsigned integer | 50 = 16-bit signed int array,                         |
+|                   |                            | 51 = 32-bit floating point array,                     |
+|                   |                            | 52 = 32-bit signed integer array,                     |
+|                   |                            | 55 = 8-bit unsigned integer array                     |
+| HCount            | 32-bit LE unsigned integer | Point count (used for oscillograms)                   |
+| HTact             | 32-bit floating point      | Time between neighbour points in array, milliseconds  |
+| HDataStart        | 32-bit floating point      | Time of 1st point in array, milliseconds              |
+| HCalibr           | 32-bit floating point      | Data calibration to physical units (multiplier)       |
+| HZeroline         | 32-bit floating point      | Data zero line value (to be automatically subtracted) |
+| HDataSize         | 32-bit LE unsigned integer | Total size of data array, in bytes                    |
+| HCalibr2Milivolts | 32-bit floating point      | Data calibration to millivolts, if applicable         |
+| HComment1Len      | 8-bit unsigned integer     | Length of comment string                              |
+| HComment1         | 255 bytes                  | Comment as ascii characters                           |
+| HDataStartExtern  | 64-bit floating point      | External delay, milliseconds (optional)               |
+| HAqVersion        | 32-bit LE unsigned integer | Software version                                      |
+| HMetaDataSize     | 32-bit LE unsigned integer | Size of optional ascii name-value array               |
+| HMetaData         | HMetaDataSize bytes        | Optional ascii name-value array                       |
++-------------------+----------------------------+-------------------------------------------------------+
++---------------- Data ----------------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| (depends on data type)                         |                                                       |
++------------------------------------------------+-------------------------------------------------------+
+
