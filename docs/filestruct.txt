@@ -1,4 +1,6 @@
 
+Signal file structure:
+
 +--------------------------------------------------------------------------------------------------------+
 +------------ File signature ----------------------------------------------------------------------------|
 +-------------------+----------------------------+-------------------------------------------------------+
@@ -46,3 +48,35 @@
 | (depends on data type)                         |                                                       |
 +------------------------------------------------+-------------------------------------------------------+
 
+
+Shot common file structure:
+
++--------------------------------------------------------------------------------------------------------+
++------------ File signature ----------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| Fmt Signature     | 4 bytes                    | 54h 55h 4Dh 48h                                       |
++-------------------+----------------------------+-------------------------------------------------------+
++------------ File header -------------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| File Header Size  | 32-bit LE unsigned integer | This header's size in bytes                           |
+| Directory count   | 32-bit LE unsigned integer | reserved, do not use                                  |
+| Directory limit   | 32-bit LE unsigned integer | reserved, do not use                                  |
+| ProgramSubversion | 32-bit LE unsigned integer | Software version that created this file               |
+| wYear             | 16-bit LE unsigned integer | Year when this shot was made                          |
+| wMonth            | 16-bit LE unsigned integer | Month when this shot was made                         |
+| wDay              | 16-bit LE unsigned integer | Day when this shot was made                           |
+| wHour             | 16-bit LE unsigned integer | Hour when this shot was made                          |
+| wMinute           | 16-bit LE unsigned integer | Minute when this shot was made                        |
+| wSecond           | 16-bit LE unsigned integer | Second when this shot was made                        |
+| SigUpdateCounter  | 32-bit LE unsigned integer | reserved, do not use                                  |
+| hdrShotNameLen    | 8-bit unsigned integer     | Length of shot name                                   |
+| hdrShotName       | 40 bytes                   | Shot name as ascii characters                         |
+| hdrFillerByte     | 8-bit unsigned integer     | reserved, do not use                                  |
+| hdrPuffProgramOfs | 32-bit LE unsigned integer | Puff program offset in bytes, relative to file start  |
+| hdrPuffProgramLen | 32-bit LE unsigned integer | Puff program length in bytes                          |
++-------------------+----------------------------+-------------------------------------------------------+
++---------------- Optional supplementary data -----------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| (Typically contains puff program string and/or |                                                       |
+|   synchronizer control string)                 |                                                       |
++------------------------------------------------+-------------------------------------------------------+
