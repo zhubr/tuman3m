@@ -68,7 +68,7 @@ Shot common file structure:
 | wHour             | 16-bit LE unsigned integer | Hour when this shot was made                          |
 | wMinute           | 16-bit LE unsigned integer | Minute when this shot was made                        |
 | wSecond           | 16-bit LE unsigned integer | Second when this shot was made                        |
-| SigUpdateCounter  | 32-bit LE unsigned integer | reserved, do not use                                  |
+| SigUpdateCounter  | 16-bit LE unsigned integer | reserved, do not use                                  |
 | hdrShotNameLen    | 8-bit unsigned integer     | Length of shot name                                   |
 | hdrShotName       | 40 bytes                   | Shot name as ascii characters                         |
 | hdrFillerByte     | 8-bit unsigned integer     | reserved, do not use                                  |
