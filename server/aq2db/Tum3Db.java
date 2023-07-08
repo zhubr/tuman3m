@@ -647,6 +647,12 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    public void setUplink(InterconInitiator _initiator) {
+
+        new UplinkScheduler(_initiator, this).WorkStart();
+
+    }
+
     private int LastShotId_int() {
 
         synchronized(FGlobalShotList) { return FGlobalShotList.size() - 1; }
@@ -656,7 +662,8 @@ public class Tum3Db implements Runnable, AppStopHook {
     public static int LastShotId(int _db_idx) {
 
         Tum3Db tmp_inst = getDbInstance(_db_idx, true);
-        return tmp_inst.LastShotId_int();
+        if (null == tmp_inst) return -1; // YYY
+        else return tmp_inst.LastShotId_int();
 
     }
 

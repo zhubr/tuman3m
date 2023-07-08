@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -23,10 +23,9 @@ import java.util.HashMap;
 import java.util.ArrayList;
 
 
-public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
+public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
 
 
-    private final static String TUM3_CFG_ws_raw_out_buff_kbytes = "ws_raw_out_buff_kbytes";
     private final static int CONST_WS_SRC_WAKEUP_MILLIS = 1000;
     private final static int CONST_WS_DST_WAKEUP_MILLIS = 1000;
     private final static int CONST_WS_DST_WAKEUP_MILLIS_MIN = 100;
@@ -36,42 +35,30 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
     private final static int INTRL_SOCK_FULL = 1;
     private final static int INTRL_DATA_FULL = 2;
 
-    private int db_index;
-    private String db_name;
+    //private int db_index;
+    //private String db_name;
+    SessionProducerWeb session_producer;
 
 
     private static class ServerReader extends Thread implements ClientWriter {
 
-        private SrvLink sLink;
+        private SrvLinkBase sLink;
         private LinkMgrWeb parentStreamer;
         private ClientWriterRaw raw_writer;
         private volatile byte[] tmpInputBuff;
         private volatile boolean tmpInputBuffBusy = false;
         private volatile int tmpInputBuffCount = 0;
         private ByteBuffer msgBb;
-        private static final int CONST_WS_BUFF_SIZE_def = 512; // 512 Kbytes (very small default)
-        private static int CONST_WS_BUFF_SIZE[] = InitWsBuffSizeConst(); // Should be per-db now.
         private volatile ArrayList<String> outOOBlist = new ArrayList<String>();
         private ArrayList<String> outOOBlist2 = new ArrayList<String>();
         private Object WaitObj = new Object();
 
-        private static final int[] InitWsBuffSizeConst() {
 
-            int tmp_arr[] = new int[Tum3cfg.getGlbInstance().getDbCount()];
-            Tum3cfg cfg = Tum3cfg.getGlbInstance();
-            for (int tmp_i = 0; tmp_i < tmp_arr.length; tmp_i++) {
-                tmp_arr[tmp_i] = 1024 * Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_ws_raw_out_buff_kbytes, CONST_WS_BUFF_SIZE_def);
-                Tum3Logger.DoLog(cfg.getDbName(tmp_i), false, "DEBUG: CONST_WS_BUFF_SIZE=" + tmp_arr[tmp_i]);
-            }
-            return tmp_arr;
-
-        }
-
-        public ServerReader (int _db_idx, LinkMgrWeb f, SrvLink l, ClientWriterRaw _o_raw) {
+        public ServerReader(SessionProducerWeb _session_producer, LinkMgrWeb f, SrvLinkBase l, ClientWriterRaw _o_raw) {
             sLink = l;
             raw_writer = _o_raw;
             parentStreamer = f;
-            tmpInputBuff = new byte[CONST_WS_BUFF_SIZE[_db_idx]];
+            tmpInputBuff = new byte[_session_producer.get_CONST_WS_BUFF_SIZE() /* CONST_WS_BUFF_SIZE[_db_idx] */];
             msgBb = ByteBuffer.wrap(tmpInputBuff);
             this.setDaemon(true);
             this.start();
@@ -198,7 +185,7 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
 
     }
 
-    private SrvLink sLink = null;
+    private SrvLinkBase sLink = null;
     private ServerReader srv_reader = null;
     private ClientWriterRaw o_raw;
     public boolean ready_local = false;
@@ -212,30 +199,37 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
     private int input_queue_size = 0, input_queue_count = 0;
 
     private final static String TUM3_CFG_max_inp_buff_kbytes = "max_inp_buff_kbytes";
-    private final static int CONST_MAX_INP_BUFF_KBYTES_default = 1;
-    private volatile static int CONST_MAX_INP_BUFF_BYTES = 0;
+    //private final static int CONST_MAX_INP_BUFF_KBYTES_default = 1;
+    //private volatile static int CONST_MAX_INP_BUFF_BYTES = 0;
     private final static int CONST_MAX_INP_OOB_CHARS = 16;
     private final static int CONST_INPUT_INTERMED_BYTES_LIMIT = 32*1024*1024; // XXX Test and tune.
     private final static int CONST_INPUT_INTERMED_MSGS_LIMIT = 400; // XXX Test and tune.
 
     private String transp_caller = "", transp_user = "", transp_agent = "";
 
-    public LinkMgrWeb(int _db_idx, ClientWriterRaw _o_raw, SelectedHttpHeaders http_headers)
+    public LinkMgrWeb(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw, SelectedHttpHeaders http_headers)
     {
         // "x-real-ip", "x-real-port", "x-real-user", "user-agent"
-        db_index = _db_idx;
-        db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
-        String tmp_ip = http_headers.safeGet("x-real-ip"), tmp_port = http_headers.safeGet("x-real-port");
-        if (!tmp_ip.isEmpty() && !tmp_port.isEmpty()) transp_caller = tmp_ip + ":" + tmp_port;
-        transp_user = http_headers.safeGet("x-real-user");
-        transp_agent = http_headers.safeGet("user-agent");
-        //System.out.println("[aq2j] DEBUG: tmp_ip=" + tmp_ip + " tmp_port=" + tmp_port + " tmp_user=" + tmp_user + " tmp_agent=" + tmp_agent);
-        sLink = new SrvLink(_db_idx, this);
-        if (0 == CONST_MAX_INP_BUFF_BYTES) {
-            CONST_MAX_INP_BUFF_BYTES = 1024 * Tum3cfg.getIntValue(db_index, true, TUM3_CFG_max_inp_buff_kbytes, CONST_MAX_INP_BUFF_KBYTES_default);
-            Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_MAX_INP_BUFF_BYTES=" + CONST_MAX_INP_BUFF_BYTES);
+        session_producer = _session_producer; // YYY
+        //db_index = _db_idx;
+        //db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
+        if (null != http_headers) {
+            String tmp_ip = http_headers.safeGet("x-real-ip"), tmp_port = http_headers.safeGet("x-real-port");
+            if (!tmp_ip.isEmpty() && !tmp_port.isEmpty()) transp_caller = tmp_ip + ":" + tmp_port;
+            transp_user = http_headers.safeGet("x-real-user");
+            transp_agent = http_headers.safeGet("user-agent");
+        } else if (_session_producer instanceof SessionProducerWebMetaUpl) { // YYY
+            transp_caller = ((SessionProducerWebMetaUpl)_session_producer).getTargetAddr(); // YYY
+            transp_user = ((SessionProducerWebMetaUpl)_session_producer).getUserName(); // YYY
         }
+        //System.out.println("[aq2j] DEBUG: tmp_ip=" + tmp_ip + " tmp_port=" + tmp_port + " tmp_user=" + tmp_user + " tmp_agent=" + tmp_agent);
+        //if (0 == CONST_MAX_INP_BUFF_BYTES) {
+        //    CONST_MAX_INP_BUFF_BYTES = 1024 * Tum3cfg.getIntValue(db_index, true, TUM3_CFG_max_inp_buff_kbytes, CONST_MAX_INP_BUFF_KBYTES_default);
+        //    Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "DEBUG: CONST_MAX_INP_BUFF_BYTES=" + CONST_MAX_INP_BUFF_BYTES);
+        //}
+        //CONST_MAX_INP_BUFF_BYTES = session_producer.CONST_MAX_INP_BUFF_BYTES();
         o_raw = _o_raw;
+        sLink = session_producer.newSrvLink(this); // new SrvLink(_db_idx, this);
         this.start();
     }
 
@@ -280,8 +274,9 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
 
     public void ShutdownSrvLink(String reason) {
 
+        if (null == reason) reason = ""; // YYY
+        if (reason.isEmpty()) reason = "Empty disconnect reason: " + Tum3Util.getStackTraceAuto(); // YYY
         SetTerminate(reason);
-        //SetReady();
 
     }
 
@@ -337,7 +332,7 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
         post(new Msg_ReadFromClient(message));
     }
     private void Do_ReadFromClient(ByteBuffer message) throws Exception {
-        sLink.SendToServer(SrvLink.THRD_INTERNAL, message);
+        sLink.SendToServer(SrvLinkBase.THRD_INTERNAL, message);
     }
 
     public void post(NetMsgSized msg) { // XXX FIXME!!! Provide some interrupter callback for the waiting case!
@@ -372,7 +367,7 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
 
     private void Tick() throws Exception {
 
-        sLink.ClientReaderTick(SrvLink.THRD_INTERNAL, srv_reader);
+        sLink.ClientReaderTick(SrvLinkBase.THRD_INTERNAL, srv_reader);
 
     }
 
@@ -419,15 +414,14 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
         String tmp_new_reason = "";
         try {
 
-            sLink.DoLink();
-
             //System.out.println("[aq2j] DEBUG: Opening communication.");
-            srv_reader = new ServerReader(db_index, this, sLink, o_raw);
-            //SetReady();
+            srv_reader = new ServerReader(session_producer, this, sLink, o_raw);
 
             boolean tmp_data_pending = false;
 
             //System.out.println("[DEBUG] example text: tmp_data_pending");
+
+            sLink.DoLink(); // YYY Moved a bit down, closer to "while".
 
             while (!MustShutdownSrvLink()) {
 
@@ -476,7 +470,7 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
         if (tmp_prev_reason.isEmpty() && !tmp_new_reason.isEmpty())
             tmp_prev_reason = tmp_new_reason;
 
-        Tum3Logger.DoLog(db_name, false, "Closing communication with ws/" + transp_caller + " (" + tmp_prev_reason + ")");
+        Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "Closing communication with ws*" + transp_caller + " (" + tmp_prev_reason + ")");
         sLink.CancelLink();  //CancelConnection();
 
         try {
@@ -502,7 +496,7 @@ public final class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHoo
                 return INTRL_SOCK_FULL;
             } else {
                 //if (!tmp_out_wait) System.out.println("[DEBUG] sLink.ReadFromServer2 was full!");
-                tmp_out_wait = sLink.ReadFromServer2(SrvLink.THRD_INTERNAL, srv_reader, hurry);
+                tmp_out_wait = sLink.ReadFromServer2(SrvLinkBase.THRD_INTERNAL, srv_reader, hurry);
                 //if (!tmp_out_wait) System.out.println("[DEBUG] sLink.ReadFromServer2 now full!");
                 //if (hurry) System.out.println("[aq2j] ReadFromServer2 returned " + tmp_out_wait);
             }

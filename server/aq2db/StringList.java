@@ -25,12 +25,23 @@ import java.util.List;
 public class StringList extends ArrayList<String> {
 
 
-    public StringList(String[] src) {
+    public StringList(String[] src, boolean trim_lf) {
 
         super();
-        for (int i = 0; i < src.length; i++) add(src[i]);
+        for (int i = 0; i < src.length; i++) {
+            String tmp_st = src[i];
+            if (trim_lf && tmp_st.endsWith("\r")) tmp_st = tmp_st.substring(0, tmp_st.length() - 1); // YYY
+            add(tmp_st);
+        }
 
     }
+
+    public StringList(String[] src) {
+
+        this(src, false);
+
+    }
+
 
     public StringList dup() {
 
@@ -70,7 +81,7 @@ public class StringList extends ArrayList<String> {
                 String readData = Tum3Util.BytesToStringRaw(buf_b, 0, numRead);
                 tmp_sb.append(readData);
             }
-            results = new StringList(tmp_sb.toString().split("\r\n"));
+            results = new StringList(tmp_sb.toString().split("\n"), true); // YYY
 
             /*
 System.out.println("[DEBUG]: readFromFile: lines=" + results.size());

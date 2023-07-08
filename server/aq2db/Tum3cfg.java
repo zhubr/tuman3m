@@ -26,10 +26,21 @@ public class Tum3cfg {
     private final static String TUM3_CFG_dblist = "dblist";
     public  final static String TUM3_CFG_db_root = "db_root"; // Moved from tum3db
     public  final static String TUM3_CFG_web_enabled = "web_enabled";
+    public  final static String TUM3_CFG_downlink_enabled = "downlink_enabled";
+    public  final static String TUM3_CFG_uplink_enabled = "uplink_enabled";
     public  final static String TUM3_CFG_tcp_enabled = "tcp_enabled";
+
+    public  final static String TUM3_CFG_uplink_serv_addr = "uplink_serv_addr"; // YYY
+    public  final static String TUM3_CFG_uplink_trusted_keys = "uplink_trusted_keys"; // YYY
+    public  final static String TUM3_CFG_uplink_connect_timeout = "uplink_connect_timeout"; // YYY
+    public  final static String TUM3_CFG_uplink_credentials = "uplink_credentials"; // YYY
+    public  final static String TUM3_CFG_uplink_username = "username"; // YYY
+    public  final static String TUM3_CFG_uplink_password = "password"; // YYY
+
     private final static String TUM3_CFG_shutdown_timeout = "shutdown_timeout";
     private final static String TUM3_CFG_is_writeable = "is_writeable";
-    private final static String TUM3_CFG_is_commentable = "is_commentable"; // YYY
+    private final static String TUM3_CFG_ugc_enabled = "ugc_enabled"; // YYY
+    private final static String TUM3_CFG_ugc_uplinked = "ugc_uplinked"; // YYY
     public  final static String TUM3_CFG_hotstart_path = "hotstart_path";
     private final static int CONST_DEF_SHUTDOWN_TIMEOUT = 2500;
 
@@ -42,14 +53,16 @@ public class Tum3cfg {
     public class DbCfg {
 
         private String db_name;
-        private boolean db_web_enabled, db_tcp_enabled;
+        private boolean db_web_enabled, db_tcp_enabled, db_downlink_enabled, db_uplink_enabled;
         private Properties db_props;
 
-        public DbCfg(String _db_name, boolean _web_enabled, boolean _tcp_enabled, Properties _db_props) {
+        public DbCfg(String _db_name, boolean _web_enabled, boolean _tcp_enabled, boolean _downlink_enabled, boolean _uplink_enabled, Properties _db_props) {
 
             db_name = _db_name;
             db_web_enabled = _web_enabled;
             db_tcp_enabled = _tcp_enabled;
+            db_downlink_enabled = _downlink_enabled;
+            db_uplink_enabled = _uplink_enabled;
             db_props = _db_props;
             //System.out.println("[DEBUG] added DbCfg: <" + _db_name + ">");
 
@@ -102,7 +115,9 @@ public class Tum3cfg {
                     if (!db_props.getProperty(TUM3_CFG_db_root, "").isEmpty()) {
                         boolean tmp_web_enabled = "1".equals(db_props.getProperty(TUM3_CFG_web_enabled, "1").trim());
                         boolean tmp_tcp_enabled = "1".equals(db_props.getProperty(TUM3_CFG_tcp_enabled, "1").trim());
-                        if (tmp_web_enabled || tmp_tcp_enabled) db_configs.add(new DbCfg(tmp_db_list[tmp_i], tmp_web_enabled, tmp_tcp_enabled, db_props));
+                        boolean tmp_downlink_enabled = "1".equals(db_props.getProperty(TUM3_CFG_downlink_enabled, "0").trim());
+                        boolean tmp_uplink_enabled = "1".equals(db_props.getProperty(TUM3_CFG_uplink_enabled, "0").trim());
+                        if (tmp_web_enabled || tmp_tcp_enabled || tmp_downlink_enabled || tmp_uplink_enabled) db_configs.add(new DbCfg(tmp_db_list[tmp_i], tmp_web_enabled, tmp_tcp_enabled, tmp_downlink_enabled, tmp_uplink_enabled, db_props));
                     }
                 } catch (Exception e) {
                     Tum3Logger.println("Warning: config not present or invalid for database <" + tmp_db_list[tmp_i] + ">: " + e);
@@ -144,6 +159,18 @@ public class Tum3cfg {
     public boolean getDbWebEnabled(int _db_idx) {
 
         return db_configs.get(_db_idx).db_web_enabled;
+
+    }
+
+    public boolean getDbDownlinkEnabled(int _db_idx) {
+
+        return db_configs.get(_db_idx).db_downlink_enabled;
+
+    }
+
+    public boolean getDbUplinkEnabled(int _db_idx) {
+
+        return db_configs.get(_db_idx).db_uplink_enabled;
 
     }
 
@@ -222,8 +249,12 @@ public class Tum3cfg {
         return "1".equals(getParValue(_db_idx, true, TUM3_CFG_is_writeable, "0").trim());
     }
 
-    public static boolean isCommentable(int _db_idx) {
-        return "1".equals(getParValue(_db_idx, true, TUM3_CFG_is_commentable, "0").trim());
+    public static boolean UgcEnabled(int _db_idx) {
+        return "1".equals(getParValue(_db_idx, true, TUM3_CFG_ugc_enabled, "0").trim());
+    }
+
+    public static boolean UgcUplinked(int _db_idx) {
+        return "1".equals(getParValue(_db_idx, true, TUM3_CFG_ugc_uplinked, "0").trim());
     }
 
     public static boolean isGlbWriteable() {

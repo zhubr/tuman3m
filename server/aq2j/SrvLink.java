@@ -63,7 +63,7 @@ class ReqTraceListClass extends ArrayList<TraceRequest> {
 class PendingTraceListStrings extends ArrayList<String> {
 }
 
-public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq3sender {
+public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf, UgcReplyHandlerExt, aq3sender {
 
     private final static String CONST_MSG_SRVLINK_ERR01 = "Internal error opening shot name";
     private final static String CONST_MSG_SRVLINK_ERR02 = "Internal error locating shot name";
@@ -87,26 +87,14 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
         213, 126, 228, 60, 99, 87, 70, 194, 216, 93, 224, 214
     };
 
-    public final static byte THRD_EXTERNAL = 4;
-    public final static byte THRD_INTERNAL = 5;
-    private final static byte THRD_UNKNOWN = 0;
-
     private static volatile int dbg_serial = 0;
     public int my_dbg_serial = 0;
 
-    private SrvLinkOwner Owner = null;
     private aq3h aq3hInstance = null;
 
-    private final static int CONST_TRAILING_BYTES_LIMIT = 1024*1024*256; // XXX TODO!!! Make this configurable?
-
-    private final static int STAGE_SIGN_4BYTES = 0;
-    private final static int STAGE_TRAILING_LEN = 1;
-    private final static int STAGE_TRAILING_BODY = 2;
-
-    private final static String TUM3_CFG_max_out_queue_kbytes = "max_out_queue_kbytes";
-    private final static String TUM3_CFG_max_out_queue_len = "max_out_queue_len";
-    private final static String TUM3_CFG_max_out_buff_count = "max_out_buff_count";
-    private final static String TUM3_CFG_idle_check_alive_delay = "idle_check_alive_delay";
+    private final static String TUM3_CFG_max_out_buff_count = "max_out_buff_count"; // YYY
+    private final static String TUM3_CFG_idle_check_alive_delay = "idle_check_alive_delay"; // YYY
+    private final static String TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes";
 
     private final static String const_signal_title = "Title";
     private final static String const_signal_is_density = "IsDensity";
@@ -117,31 +105,16 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
     private final static int CONST_KEEPALIVE_INTERVAL_SEC_default = 20;
 
     private final static int CONST_MAX_TALK_OUT_QUEUE = 20;
-    private final static int CONST_OUT_BUFF_WAIT_WAKEUP_SEC = 1000;
     private final static int CONST_MAX_REQ_STRING_COUNT = 1000;
 
+    private final static int CONST_MIN_OUT_BUFF_default = 1;  // kbytes.
     private static final int CONST_KEEPALIVE_INTERVAL_SEC[];
     private static final int CONST_MAX_TRACE_OUT_QUEUE_BYTES[];
     private static final int CONST_MAX_TRACE_OUT_QUEUE_LEN[];
     private static final int CONST_OUT_BUFF_COUNT_MAX[];
+    private static int CONST_MIN_OUT_BUFF[] = InitMinOutBuffConst();  // Should be per-db now.
 
-    private final static int CONST_LOGIN_FAIL_PENDING_SEC = 15;
-    private final static int CONST_LOGIN_TIMEOUT_SEC = 15;
-
-    private volatile boolean CancellingLink = false;
-    private Object OutBuffFullLock = new Object();
-    private Object OutBuffEmptyLock = new Object();
-    private int curr_stage = STAGE_SIGN_4BYTES;
-    private int curr_remaining_bytes = 4;
-    private byte curr_req_code = 0;
-    private int curr_req_trailing_len = 0;
-    private byte[] req_header, req_size_holder, req_body;
-    private volatile OutgoingBuff[] out_buffs_empty, out_buffs_full;
-    private volatile int out_buffs_empty_fill, out_buffs_full_fill;
-    private int out_buffs_count = 0;
-    private OutgoingBuff out_buff_now_sending = null;
     private boolean WasAuthorized = false;
-    private long ConnectionStartedAt;
     private volatile int FFeatureSelectWord = 0; // Moved from local.
     private boolean LoginFailedState = false;
     private long LoginFailedAt;
@@ -158,18 +131,6 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
     private OutBuffContinuator segmented_data = null;
     private long segmented_Full = 0, segmented_Ofs = 0;
     private int segmented_chunk_size = 0;
-
-    private volatile int hanging_out_trace_bytes=0, hanging_out_trace_number=0;
-    private RecycledBuffContext ctxRecycledReader;
-    private volatile long last_client_activity_time;
-    private volatile boolean SupportOOB;
-    private int keepalive_code_next;
-    private volatile int keepalive_code_sent;
-    private volatile boolean keepalive_sent_oob = false, keepalive_sent_inline = false;
-    private volatile String oob_msg_remainder = "";
-    private volatile int TalkMsgQueueFill = 0;
-    private volatile GeneralDbDistribEvent[] TalkMsgQueue;
-    private volatile boolean TalkMsgQueueOverflow = false;
 
     private volatile int RCompatVersion;
     private int RLinkKilobits, FModeratedDownloadBytes;
@@ -209,33 +170,31 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
         }
     }
 
-    class RecycledBuffContext {
-
-        public OutgoingBuff out_buff_for_send = null;
-
-    }
-
     public SrvLink(int _db_idx, SrvLinkOwner thisOwner) {
+        super(thisOwner);
         db_index = _db_idx;
         db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
         dbg_serial++;
         my_dbg_serial = dbg_serial;
-        SupportOOB = thisOwner.SupportOOB();
-        req_header = new byte[4];
-        req_size_holder = new byte[4];
         TalkMsgQueue = new GeneralDbDistribEvent[CONST_MAX_TALK_OUT_QUEUE];
-        synchronized(OutBuffEmptyLock) {
-            out_buffs_empty = new OutgoingBuff[CONST_OUT_BUFF_COUNT_MAX[db_index]+2];
-            out_buffs_empty_fill = 0;
+    }
+
+    private final static int[] InitMinOutBuffConst() {
+
+        int tmp_arr[] = new int[Tum3cfg.getGlbInstance().getDbCount()];
+        Tum3cfg cfg = Tum3cfg.getGlbInstance();
+        for (int tmp_i = 0; tmp_i < tmp_arr.length; tmp_i++) {
+            tmp_arr[tmp_i] = 1024*Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_min_out_buff_kbytes, CONST_MIN_OUT_BUFF_default);
+            Tum3Logger.DoLog(cfg.getDbName(tmp_i), false, "DEBUG: CONST_MIN_OUT_BUFF=" + tmp_arr[tmp_i]);
         }
-        synchronized(OutBuffFullLock) {
-            out_buffs_full = new OutgoingBuff[CONST_OUT_BUFF_COUNT_MAX[db_index]+2];
-            out_buffs_full_fill = 0;
-        }
-        ctxRecycledReader = new RecycledBuffContext();
-        req_body = null;
-        Owner = thisOwner;
-        ConnectionStartedAt = System.currentTimeMillis();
+        return tmp_arr;
+
+    }
+
+    protected OutgoingBuff newOutgoingBuff() {
+
+        return new OutgoingBuff(CONST_MIN_OUT_BUFF[db_index] /* db_index */); // YYY
+
     }
 
     public Tum3Db GetDb() {
@@ -256,22 +215,6 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
 
     }
 
-    public String CallerNetAddr() {
-
-        return Owner.get_transp_title() + "/" + Owner.get_transp_caller();
-
-    }
-
-    public String DebugTitle() {
-
-        String tmp_st = Owner.get_transp_user();
-        if (tmp_st.isEmpty() && !AuthorizedLogin.isEmpty()) tmp_st = AuthorizedLogin;
-        if (!tmp_st.isEmpty()) tmp_st = tmp_st + "@";
-        tmp_st = tmp_st + CallerNetAddr();
-        return tmp_st;
-
-    }
-
     public byte[] GetBinaryUsername() {
 
         return bin_username;
@@ -284,188 +227,22 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
 
     }
 
-    public void DoLink() throws Exception {
+    protected boolean CancelLinkIntrnl() {
 
-        UpdateLastClientActivityTime();
-        ConnectionStartedAt = System.currentTimeMillis();
+        if (super.CancelLinkIntrnl()) return true;
 
-    }
+        if (aq3hInstance != null) aq3hInstance.DeregisterLink(this); // YYY Moved here from above "return true"
+        flushWritingShot(); // YYY Moved here from above "return true"
 
-    public void CancelLink() {
-
-        if (aq3hInstance != null) aq3hInstance.DeregisterLink(this);
-        flushWritingShot();
-        OutgoingBuff[] tmp_buffs = null;
-        synchronized(OutBuffFullLock) { 
-            if (CancellingLink) return;
-            //System.out.println("[aq2j] DEBUG: CancelLink().");
-            CancellingLink = true;
-            if (out_buffs_full_fill > 0) {
-                tmp_buffs = new OutgoingBuff[out_buffs_full_fill];
-                for (int tmp_i=0; tmp_i < out_buffs_full_fill; tmp_i++)
-                    tmp_buffs[tmp_i] = out_buffs_full[tmp_i];
-                out_buffs_full_fill = 0;
-            }
-        }
-        if (null != tmp_buffs)
-            for (int tmp_i=0; tmp_i < tmp_buffs.length; tmp_i++)
-                tmp_buffs[tmp_i].CancelData();
         if (null != segmented_data) Segmented_data_cancel();
         if (dbLink != null) {
             Tum3Broadcaster.release(dbLink, this);
             dbLink.releaseDbClient();
             dbLink = null;
         }
-    }
 
-    private boolean PreverifyReq(byte req_code, int req_trailing_len) {
-        // XXX TODO!!! Actually implement some checks.
-        return true;
-    }
+        return false;
 
-    /*
-      private void WakeupServerReader() {
-
-        // Websocket blocks inside run() on input_blocker, for CONST_WS_DST_WAKEUP_MILLIS max.
-        // NIO TCP blocks inside run() on sc_selector, for CONST_TCP_CLIENT_WAKEINTERVAL max.
-
-        if (!is_single_thread)
-          synchronized(OutBuffFullLock) { OutBuffFullLock.notify(); }
-
-      }
-     */
-    private OutgoingBuff GetBuff(byte thrd_ctx, RecycledBuffContext ctx, boolean may_block) throws Exception {
-        return GetBuff(thrd_ctx, ctx, may_block, false);
-    }
-
-    private OutgoingBuff GetBuff(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
-        return GetBuff(thrd_ctx, ctx, true, false);
-    }
-
-    private OutgoingBuff GetBuff(byte thrd_ctx, RecycledBuffContext ctx, boolean may_block, boolean try_harder) throws Exception {
-        // Note: might be called from 2 threads, so need to respect thread context
-        //   and always protect out_buffs by synchronized(OutBuffEmptyLock){}.
-        // Note2. This function might block till it is actually possible 
-        //  to provide some free buffer object. This would ultimately cause 
-        //  blocking inside of SendToServer(), which is perfectly legal.
-        //System.out.print("+");
-        if (may_block && ((thrd_ctx == THRD_UNKNOWN) || (thrd_ctx == THRD_EXTERNAL))) throw new Exception("Internal error, may_block and thrd_ctx=" + thrd_ctx);
-
-        OutgoingBuff tmp_buff = null;
-
-        //if (ctx.out_buff_now_filling != null) {
-        //  System.out.println("[aq2j] FATAL: <" + Thread.currentThread().getId() + "> GetBuff(" + dbg_text + "): out_buff_now_filling != null");
-        //  throw new Exception("FATAL: unexpected out_buff_now_filling in GetBuff()");
-        //}
-
-        if (null != ctx) {
-            tmp_buff = ctx.out_buff_for_send;
-            ctx.out_buff_for_send = null;
-            //System.out.println("[aq2j] DEBUG: <" + Thread.currentThread().getId() + "> GetBuff(" + dbg_text + "): reusing out buff, is_null=" + (tmp_buff == null));
-        } else {
-            //System.out.println("[aq2j] SrvLink.GetBuff(" + dbg_text + "): obtaining buff...");
-
-            boolean tmp_wait_started = false;
-            long tmp_wait_started_at = System.currentTimeMillis();
-
-            if (THRD_INTERNAL == thrd_ctx) {
-                boolean tmp_ready = false;
-                while ((tmp_buff == null) && !CancellingLink && ((System.currentTimeMillis() - tmp_wait_started_at) < CONST_KEEPALIVE_INTERVAL_SEC[db_index]*1000)) {
-                    synchronized(OutBuffEmptyLock) {
-                        if (out_buffs_empty_fill > 0) {
-                            tmp_buff = out_buffs_empty[out_buffs_empty_fill - 1];
-                            out_buffs_empty_fill--;
-                        } else if ((out_buffs_count < CONST_OUT_BUFF_COUNT_MAX[db_index]) || (try_harder && ((out_buffs_count < (CONST_OUT_BUFF_COUNT_MAX[db_index]+2))))) {
-                            tmp_buff = new OutgoingBuff(db_index); // XXX TODO!!! Not very good - allocating memory while holding a lock.
-                            out_buffs_count++;
-                        } 
-                    }
-                    if (tmp_buff == null) {
-                        if (may_block) {
-                            tmp_wait_started = true;
-                            //  try {
-                            //    OutBuffEmptyLock.wait(CONST_OUT_BUFF_WAIT_WAKEUP_SEC); // Reminder! In single-thread arrangement simply waiting on OutBuffEmptyLock is not very usefull because there might be no other thread to wait for!
-                            //  } catch(Exception e) { }
-                            //if (tmp_ready) Tum3Logger.DoLog(db_name, true, "Unexpected in GetBuff: tmp_ready but no free buffers." + " Session: " + DebugTitle());
-                            tmp_ready = Owner.WaitForOutputDone(CONST_OUT_BUFF_WAIT_WAKEUP_SEC);
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if ((thrd_ctx == THRD_UNKNOWN) || (thrd_ctx == THRD_EXTERNAL))
-                synchronized(OutBuffEmptyLock) {
-                    if (out_buffs_empty_fill > 0) {
-                        tmp_buff = out_buffs_empty[out_buffs_empty_fill - 1];
-                        out_buffs_empty_fill--;
-                    } else {
-                        if ((out_buffs_count < CONST_OUT_BUFF_COUNT_MAX[db_index]) || (try_harder && ((out_buffs_count < (CONST_OUT_BUFF_COUNT_MAX[db_index]+2))))) {
-                            tmp_buff = new OutgoingBuff(db_index); // XXX TODO. Better avoid new in synchronized.
-                            out_buffs_count++;
-                        }
-                    }
-                }
-
-            if ((tmp_buff == null) && may_block) Tum3Logger.DoLog(db_name, true, "DEBUG: " + DebugTitle() + " GetBuff() timeout. Consider increasing " + TUM3_CFG_idle_check_alive_delay + " and/or " + TUM3_CFG_max_out_buff_count + ". Session: " + DebugTitle() + "; " + Tum3Util.getStackTraceAuto());
-            //if (tmp_wait_started) System.out.print("[" + my_dbg_serial + ": GetBuff done " + (System.currentTimeMillis() - tmp_wait_started_at) + "]");
-            //System.out.println("[aq2j] DEBUG: <" + Thread.currentThread().getId() + "> GetBuff(" + dbg_text + "): found out buff, is_null=" + (tmp_buff == null));
-        }
-        //ctx.out_buff_now_filling = tmp_buff;
-        //System.out.println("[aq2j] DEBUG: <" + Thread.currentThread().getId() + "> GetBuff(" + dbg_text + "): out_buff_now_filling := tmp_buff");
-        //System.out.print("-");
-        return tmp_buff;
-    }
-
-    private void RefuseBuff(byte thrd_ctx, RecycledBuffContext ctx, OutgoingBuff theBuff) {
-        // Note: might eventually be called from 2 threads, so need to respect thread context.
-
-        //ctx.out_buff_now_filling = null;
-
-        if (null != ctx) {
-            ctx.out_buff_for_send = theBuff;
-        } else {
-            synchronized(OutBuffEmptyLock) {
-                if (out_buffs_count <= CONST_OUT_BUFF_COUNT_MAX[db_index]) {
-                    out_buffs_empty[out_buffs_empty_fill] = theBuff;
-                    out_buffs_empty_fill++;
-                    //if (!is_single_thread) OutBuffEmptyLock.notify(); // Removed because there is no longer any OutBuffEmptyLock.wait().
-                } else {
-                    out_buffs_count--;
-                }
-            }
-            if (thrd_ctx != THRD_INTERNAL) {
-                //System.out.println("[DEBUG] RefuseBuff: WakeupMain");
-                WakeupMain();
-            }
-        }
-    }
-
-    private void PutBuff(byte thrd_ctx, OutgoingBuff buff, RecycledBuffContext ctx) throws Exception {
-        // Note: might be called from 2 threads, so need to respect thread context.
-
-        //if (buff != ctx.out_buff_now_filling) {
-        //  System.out.println("[aq2j] FATAL: wrong buff provided to PutBuff()");
-        //  throw new Exception("FATAL: wrong buff provided to PutBuff()");
-        //}
-
-        buff.CheckBuffFill();
-
-        if (null == ctx)
-            synchronized(OutBuffFullLock) {
-                if (CancellingLink) throw new Exception("WARNING: PutBuff() while CancellingLink.");
-                out_buffs_full[out_buffs_full_fill] = buff; // ctx.out_buff_now_filling;
-                out_buffs_full_fill++;
-                //System.out.println("[aq2j] out_buffs_full_fill=" + out_buffs_full_fill);
-            }
-        if (thrd_ctx != THRD_INTERNAL) {
-            //System.out.println("[DEBUG] PutBuff: WakeupMain");
-            WakeupMain();
-        }
-
-        //ctx.out_buff_now_filling = null;
-        //System.out.println("[aq2j] DEBUG: <" + Thread.currentThread().getId() + "> PutBuff(" + dbg_text + "): out_buff_now_filling := null");
     }
 
     private void Process_ReportAvailVer(byte thrd_ctx, RecycledBuffContext ctx, byte req_code) throws Exception {
@@ -520,31 +297,44 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
 
     }
 
-    private String UpdateUgcData(byte thrd_ctx, String _shot_num, int _req_id, byte[] _upd_arr) throws Exception {
+    private String ExecuteUgc(byte thrd_ctx, String _shot_num, int _req_id, byte[] _upd_arr) throws Exception {
 
         String tmp_err_msg = "Unspecified error";
 
-        if (AuthorizedLogin.isEmpty())
-            tmp_err_msg = "No username found for UGC update";
-        else {
+        if (Tum3cfg.UgcUplinked(db_index)) {
 
-            if (Tum3cfg.isCommentable(db_index)) {
+            return UplinkManager.ExecuteUgc(db_index, this, _shot_num, _req_id, _upd_arr);
 
-                boolean tmp_granted = false;
-                if (UserPermissions != null) if (UserPermissions.isCommentingAllowed()) tmp_granted = true;
-                if (tmp_granted) {
-                    tmp_err_msg = dbLink.UpdateUgcData(thrd_ctx, AuthorizedLogin, UserPermissions.isAddTagAllowed(), this, _req_id, _shot_num, _upd_arr);
-                } else {
-                    tmp_err_msg = dbLink.CONST_MSG_ACCESS_DENIED;
+        } else {
+
+            if ((-1 == _req_id) || (-3 == _req_id)) {
+//System.out.println("[DEBUG] Ugc request shot <" + _shot_num + "> id " + _req_id);
+                return dbLink.GetUgcData(thrd_ctx, this, _req_id, _shot_num);
+            } else {
+//System.out.println("[DEBUG] Ugc update in shot " + _shot_num + " id " + _req_id);
+
+                if (AuthorizedLogin.isEmpty())
+                    tmp_err_msg = "No username found for UGC update";
+                else {
+
+                    if (Tum3cfg.UgcEnabled(db_index)) {
+
+                        boolean tmp_granted = false;
+                        if (UserPermissions != null) if (UserPermissions.isCommentingAllowed()) tmp_granted = true;
+                        if (tmp_granted) {
+                            tmp_err_msg = dbLink.UpdateUgcData(thrd_ctx, AuthorizedLogin, UserPermissions.isAddTagAllowed(), this, _req_id, _shot_num, _upd_arr);
+                        } else {
+                            tmp_err_msg = dbLink.CONST_MSG_ACCESS_DENIED;
+                        }
+
+                    } else {
+                        tmp_err_msg = dbLink.CONST_MSG_READONLY_NOW;
+                    }
                 }
 
-            } else {
-                tmp_err_msg = dbLink.CONST_MSG_READONLY_NOW;
+                return tmp_err_msg; // YYY
             }
         }
-
-        return tmp_err_msg; // YYY
-
     }
 
     public void GenerateUgcReply(byte thrd_ctx, int _req_id, String _shot_name, String _err_msg, byte[] data) throws Exception {
@@ -553,9 +343,12 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
 
     }
 
-    public void GenerateUgcReply(int _req_id, String _shot_name, String _err_msg, byte[] data) throws Exception {
+    public void PostUgcReply(int _req_id, String _shot_name, String _err_msg, byte[] data) {
 
-        GenerateUgcReplyIntl(THRD_EXTERNAL, _req_id, _shot_name, _err_msg, data); // This will likely not work yet.
+        //Tum3Logger.DoLog(db_name, true, "[DEBUG] SrvLink.PostUgcReply: <" + _shot_name + "><" + _req_id + "> username=" + AuthorizedLogin);
+        ByteBuffer tmp_bb = null;
+        if (null != data) tmp_bb = ByteBuffer.wrap(data);
+        AddGeneralEvent(null, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_UGC_RESPONSE, _req_id, _shot_name, _err_msg, tmp_bb), null, null);
 
     }
 
@@ -623,7 +416,7 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
         return tmp_hit;
     }
 
-    private boolean NoPauseOut() {
+    protected boolean NoPauseOut() {
 
         return 
                 (!(FModerateNeedSendRequest || FModerateRequestWasSent) || !FDoModerateDownloadRate)
@@ -632,7 +425,7 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
 
     }
 
-    private boolean GetTracesContinue(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
+    protected boolean GetTracesContinue(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
 
         boolean tmp_buff_used = false;
         boolean tmpModerateNeedSendRequest = false;
@@ -861,7 +654,7 @@ public class SrvLink implements TumProtoConsts, SrvLinkIntf, UgcReplyHandler, aq
 
     }
 
-    private void TrySendContinuationReq(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
+    protected void TrySendContinuationReq(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
 
         boolean tmpModerateNeedSendRequest = false;
 
@@ -1010,16 +803,14 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
     }
 
 
-    private ByteBuffer CreateUsrListHeadBB(String _name, ByteBuffer _bb2) {
+    private ByteBuffer CreateUsrListHeadBB(String _name, int _usr_list_len) {
 
         ByteBuffer tmp_bb1 = ByteBuffer.allocate(4 + 4 + _name.length() + 4);
-        int tmp_usr_list_len = 0;
-        if (_bb2 != null) tmp_usr_list_len = _bb2.position();
         tmp_bb1.order(ByteOrder.LITTLE_ENDIAN);
         tmp_bb1.putInt(TumProtoConsts.tum3misc_userlist);
         tmp_bb1.putInt(_name.length());
         tmp_bb1.put(Tum3Util.StringToBytesRaw(_name));
-        tmp_bb1.putInt(tmp_usr_list_len);
+        tmp_bb1.putInt(_usr_list_len); // YYY
         return tmp_bb1;
 
     }
@@ -1095,8 +886,10 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             if (TUM3_KEYWORD_files.equals(tmp_keyword))
                 Tum3CollateralUpdateHelper.LoadAllTo(db_name, temp_storage);
             else if (TUM3_KEYWORD_users.equals(tmp_keyword)) {
-                ByteBuffer tmp_bb2 = Tum3Broadcaster.GetUserList(dbLink);
-                ByteBuffer tmp_bb1 = CreateUsrListHeadBB(tmp_keyword, tmp_bb2);
+                ByteBuffer tmp_bb2 = Tum3Broadcaster.GetUserList(dbLink, true);
+                int tmp_list_len = 0;
+                if (null != tmp_bb2) tmp_list_len = tmp_bb2.position(); // YYY
+                ByteBuffer tmp_bb1 = CreateUsrListHeadBB(tmp_keyword, tmp_list_len);
                 temp_storage.write(tmp_bb1.array());
                 if (tmp_bb2 != null) if (tmp_bb2.position() > 0) temp_storage.write(tmp_bb2.array(), 0, tmp_bb2.position());
             } else ;
@@ -1277,39 +1070,17 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             tmpBB.get(tmp_upd_arr);
             tmp_attempted_shot = tmp_shot_name.toString();
             tmp_attempted_id = tmp_req_id;
-            if ((-1 == tmp_attempted_id) || (-3 == tmp_attempted_id)) {
-//System.out.println("[DEBUG] Ugc request shot <" + tmp_attempted_shot + "> id " + tmp_attempted_id);
-                tmp_result = dbLink.GetUgcData(thrd_ctx, this, tmp_attempted_id, tmp_attempted_shot);
-            } else {
-//System.out.println("[DEBUG] Ugc update in shot " + tmp_attempted_shot + " id " + tmp_attempted_id);
-              tmp_result = UpdateUgcData(thrd_ctx, tmp_attempted_shot, tmp_attempted_id, tmp_upd_arr);
-            }
+            tmp_result = ExecuteUgc(thrd_ctx, tmp_attempted_shot, tmp_attempted_id, tmp_upd_arr);
 
         } catch (Exception e) {
             Tum3Logger.DoLog(db_name, true, "WARNING: unexpected format request in Process_Ugc() ignored. " + " Session: " + DebugTitle() + " (" + Tum3Util.getStackTrace(e) + ")");
-            tmp_result = "Ugc save failed with: " + e;
+            tmp_result = "Ugc request failed with: " + e;
         }
 
         if (!tmp_result.isEmpty()) GenerateUgcReplyIntl(thrd_ctx, tmp_attempted_id, tmp_attempted_shot, tmp_result, null); // YYY
 
-        String tmp_comment_txt = tmp_result;
-        if (!tmp_result.isEmpty())
-          Tum3Logger.DoLog(db_name, false, "Ugc request by " + DebugTitle() + " with result: " + tmp_comment_txt);
-    }
-
-    private void _NewMessageBoxCompat(byte thrd_ctx, String the_text, boolean _with_logger) throws Exception {
-
-        if (_with_logger) Tum3Logger.DoLog(db_name, true, the_text);
-        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
-        tmpBuff.InitSrvReply(REQUEST_TYPE_INFORMATION_TEXT, the_text.length(), the_text.length());
-        tmpBuff.putString(the_text);
-        try {
-            PutBuff(thrd_ctx, tmpBuff, null);
-        } catch (Exception e) {
-            tmpBuff.CancelData();
-            throw e;
-        }
-
+        //if (!tmp_result.isEmpty())
+        //  Tum3Logger.DoLog(db_name, false, "Ugc request by " + DebugTitle() + " with result: " + tmp_result);
     }
 
     private void Process_GetDirList(byte thrd_ctx, byte[] req_body, int req_trailing_len, RecycledBuffContext ctx) throws Exception {
@@ -1424,17 +1195,6 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             LoginFailedState = true;
             //Owner.ShutdownSrvLink("[aq2j] Login rejected for username=" + tmp_strings[0]);
         }
-    }
-
-    private String GetPasString(ByteBuffer bb, int max_len) throws Exception {
-
-        int tmp_str_len = bb.get(), tmp_remain = max_len - tmp_str_len;
-        if (tmp_str_len > max_len) throw new Exception("Overflow in GetPasString(): " + max_len + " capacity and " + tmp_str_len + " length");
-        char[] tmp_chars = new char[tmp_str_len];
-        for (int tmp_i=0; tmp_i < tmp_str_len; tmp_i++) tmp_chars[tmp_i] = (char)bb.get();
-        for (int tmp_i=0; tmp_i < tmp_remain; tmp_i++) bb.get();
-        return new String(tmp_chars);
-
     }
 
     private void Process_UploadOne(byte thrd_ctx, byte[] req_body, int req_trailing_len, RecycledBuffContext ctx, boolean DataIsVolatile) throws Exception {
@@ -1584,11 +1344,6 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
     }
 
-    private String Str255(String s) {
-        if (s.length() > 254) s = s.substring(0, 251) + "...";
-        return s;
-    }
-
     private void Process_UploadEndHint() {
 
         //System.out.println("[DEBUG] Process_UploadEndHint()");
@@ -1627,7 +1382,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
     public boolean aq3send_later(int Aq3_error, int Aq3_code, int Aq3_seq, String the_body, boolean _push, boolean _try_harder) throws Exception {
         // Note: aq3send_later() is only called from aq3h.run() context.
 
-        if (CancellingLink) return false;
+        if (isCancellingLink()) return false;
 
         OutgoingBuff tmpBuff = GetBuff(THRD_EXTERNAL, null, false, _try_harder);
         if (null == tmpBuff) {
@@ -1660,7 +1415,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
     private void TalkMessageServerBroadcaster(String thisMsg, String thisReceiverName, String thisEchoName) {
 
-        Tum3Broadcaster.DistributeGeneralEvent(dbLink, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_TALK, thisMsg), null, thisReceiverName, thisEchoName);
+        Tum3Broadcaster.DistributeGeneralEvent(dbLink, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_TALK, thisMsg, thisReceiverName), null, thisReceiverName, thisEchoName);
 
     }
 
@@ -1815,121 +1570,109 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         TalkMessageServerBroadcaster("(" + AuthorizedLoginPlus() + ")" + tmp_talk_str, "", "");
     }
 
-    private void TrySendTalkMessages(byte thrd_ctx) throws Exception {
-        if (TrySendTalkMessages_int(thrd_ctx)) {
-            GetTracesContinue(thrd_ctx, null);
+    protected void SyncHandleAsyncEvent(byte thrd_ctx, int _ev_type, GeneralDbDistribEvent _ev) throws Exception {
+
+        OutgoingBuff tmpBuff = null;
+
+        if (_ev_type == _ev.DB_EV_UGC_RESPONSE) { // YYY
+            //System.out.println("[DEBUG] DB_EV_UGC_RESPONSE: <" + _ev.get_str() + "><" + _ev.get_int() + ">");
+            byte[] tmp_data_arr = null;
+            if (_ev.get_bb() != null) tmp_data_arr = _ev.get_bb().array();
+            GenerateUgcReplyIntl(thrd_ctx, _ev.get_int(), _ev.get_str(), _ev.get_str2(), tmp_data_arr);
+        } else if (_ev_type == _ev.DB_EV_TALK) {
+            tmpBuff = GetBuff(thrd_ctx, null);
+            String tmpMsg = _ev.get_str();
+            tmpBuff.InitSrvReply(REQUEST_TYPE_TALKMSG_IN, tmpMsg.length(), tmpMsg.length());
+            tmpBuff.putString(tmpMsg);
+            PutBuff(thrd_ctx, tmpBuff, null);
+        } else if (_ev_type == _ev.DB_EV_USERLIST) {
+            tmpBuff = GetBuff(thrd_ctx, null);
+            ByteBuffer tmp_bb2 = _ev.get_bb();
+            ByteBuffer tmp_bb_aux = _ev.get_bb2(); // YYY
+            int tmp_list_len = 0;
+            if (null != tmp_bb2)    tmp_list_len += tmp_bb2.position(); // YYY
+            if (null != tmp_bb_aux) tmp_list_len += tmp_bb_aux.position(); // YYY
+            ByteBuffer tmp_bb1 = CreateUsrListHeadBB(TUM3_KEYWORD_users, tmp_list_len);
+            int tmp_size = tmp_list_len + tmp_bb1.position(); // YYY
+            tmpBuff.InitSrvReply(REQUEST_TYPE_MISC_FETCH, tmp_size, tmp_size);
+            tmpBuff.putBytes(tmp_bb1.array(), 0, tmp_bb1.position());
+            tmpBuff.putBytes(tmp_bb2.array(), 0, tmp_bb2.position());
+            if (null != tmp_bb_aux) 
+                tmpBuff.putBytes(tmp_bb_aux.array(), 0, tmp_bb_aux.position()); // YYY
+            PutBuff(thrd_ctx, tmpBuff, null);
+            //System.out.println("[DEBUG] DB_EV_USERLIST: " + tmp_size);
+        } else if (_ev_type == _ev.DB_EV_NEWSHOT) {
+            String tmpMsg = _ev.get_str();
+            tmpBuff = GetBuff(thrd_ctx, null);
+            if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
+            tmpBuff.InitSrvReply(REQUEST_TYPE_TRACEINVALIDATEONE, 1 + 4*1 + tmpMsg.length(), 1 + 4*1 + tmpMsg.length());
+            tmpBuff.putByte((byte)tmpMsg.length());
+            tmpBuff.putString(tmpMsg);
+            tmpBuff.putInt(0);
+            PutBuff(thrd_ctx, tmpBuff, null);
+            //System.out.println("[DEBUG] REQUEST_TYPE_TRACEINVALIDATEONE <" + tmpMsg + "> in " + db_name + " sent OK.");
+        } else if (_ev_type == _ev.DB_EV_UGC_SHOT_UPD) {
+            String tmpMsg = _ev.get_str();
+            tmpBuff = GetBuff(thrd_ctx, null);
+            if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
+            tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP, 4 + tmpMsg.length() + 1 + 0 + 1, 4 + tmpMsg.length() + 1 + 0 + 1);
+            tmpBuff.putPasString(tmpMsg);
+            tmpBuff.putInt(-2);
+            tmpBuff.putPasString("");
+            PutBuff(thrd_ctx, tmpBuff, null);
+            //System.out.println("[DEBUG] REQUEST_TYPE_UGC_REP <" + tmpMsg + "> in " + db_name + " sent OK.");
+        } else if (_ev_type == _ev.DB_EV_UGC_LIST_UPD) { // YYY
+            tmpBuff = GetBuff(thrd_ctx, null);
+            tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP, 4 + 0 + 1 + 0 + 1, 4 + 0 + 1 + 0 + 1);
+            tmpBuff.putPasString("");
+            tmpBuff.putInt(_ev.get_int());
+            tmpBuff.putPasString("");
+            PutBuff(thrd_ctx, tmpBuff, null);
+            //System.out.println("[DEBUG] REQUEST_TYPE_UGC_REP in " + db_name + " sent OK.");
+        } else if ((_ev_type == _ev.DB_EV_TRACEUPD) || (_ev_type == _ev.DB_EV_TRACEUPD_ARR) || (_ev_type == _ev.DB_EV_TRACEDEL_ARR)) {
+            int tmp_id = 0, tmp_id_count = 1;
+            int[] tmp_ids = null;
+            if ((_ev_type == _ev.DB_EV_TRACEUPD_ARR) || (_ev_type == _ev.DB_EV_TRACEDEL_ARR)) {
+                tmp_ids = _ev.get_int_ar().clone(); // Arrays.copyOf(thisIds, thisIds.length);
+                tmp_id_count = tmp_ids.length;
+            } else {
+                tmp_id = _ev.get_int();
+                tmp_ids = new int[1];
+                tmp_ids[0] = tmp_id;
+            }
+            String tmpMsg = _ev.get_str();
+
+            //if ((_ev_type == _ev.DB_EV_TRACEUPD_ARR) || (_ev_type == _ev.DB_EV_TRACEUPD)) {
+            //System.out.print("[DEBUG] " + CallerNetAddr() + " Invalidate ids " + tmpMsg + ": ");
+            //for (int q=0; q < tmp_id_count; q++) System.out.print(tmp_ids[q] + ", ");
+            //System.out.println(" ");
+            //}
+            int tmp_processed_count = 0;
+            if (_ev_type != _ev.DB_EV_TRACEDEL_ARR) tmp_processed_count = ResumeTraceRequests(tmpMsg, tmp_ids);
+            tmp_need_resume = (tmp_processed_count > 0);
+            //System.out.println("[DEBUG] tmp_id_count=" + tmp_id_count + " tmp_processed_count=" + tmp_processed_count);
+            if (tmp_id_count > tmp_processed_count) {
+                tmpBuff = GetBuff(thrd_ctx, null);
+                if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
+                byte tmp_notify_code = REQUEST_TYPE_TRACEINVALIDATEONE;
+                if (_ev_type == _ev.DB_EV_TRACEDEL_ARR) tmp_notify_code = REQUEST_TYPE_TRACEREMOVED;
+                tmpBuff.InitSrvReply(tmp_notify_code, 1 + 4*(tmp_id_count-tmp_processed_count) + tmpMsg.length(), 1 + 4*(tmp_id_count-tmp_processed_count) + tmpMsg.length());
+                tmpBuff.putByte((byte)tmpMsg.length());
+                tmpBuff.putString(tmpMsg);
+                for (int tmp_i=0; tmp_i < tmp_id_count; tmp_i++)
+                    if (tmp_ids[tmp_i] != 0) {
+                        tmpBuff.putInt(tmp_ids[tmp_i]);
+                        //System.out.print("{" + tmp_ids[tmp_i] + "}");
+                    }
+                PutBuff(thrd_ctx, tmpBuff, null);
+                //System.out.println("[DEBUG] REQUEST_TYPE_TRACEINVALIDATEONE <" + tmpMsg + ">, " + (tmp_id_count - tmp_processed_count) + " sent OK.");
+            }
         }
     }
 
-    private boolean TrySendTalkMessages_int(byte thrd_ctx) throws Exception {
-
-        boolean tmp_need_resume = false;
-        int tmp_msg_count = 0;
-        OutgoingBuff tmpBuff = null;
-        synchronized(TalkMsgQueue) { tmp_msg_count = TalkMsgQueueFill; }
-        do {
-            if (tmp_msg_count <= 0) return tmp_need_resume;
-            GeneralDbDistribEvent tmpEv = TalkMsgQueue[0];
-            int tmp_ev_type = tmpEv.get_type();
-            if (tmp_ev_type == tmpEv.DB_EV_TALK) {
-                tmpBuff = GetBuff(thrd_ctx, null);
-                String tmpMsg = tmpEv.get_str();
-                tmpBuff.InitSrvReply(REQUEST_TYPE_TALKMSG_IN, tmpMsg.length(), tmpMsg.length());
-                tmpBuff.putString(tmpMsg);
-                PutBuff(thrd_ctx, tmpBuff, null);
-            } else if (tmp_ev_type == tmpEv.DB_EV_USERLIST) {
-                tmpBuff = GetBuff(thrd_ctx, null);
-                ByteBuffer tmp_bb2 = tmpEv.get_bb();
-                ByteBuffer tmp_bb1 = CreateUsrListHeadBB(TUM3_KEYWORD_users, tmp_bb2);
-                int tmp_size = tmp_bb2.position() + tmp_bb1.position();
-                tmpBuff.InitSrvReply(REQUEST_TYPE_MISC_FETCH, tmp_size, tmp_size);
-                tmpBuff.putBytes(tmp_bb1.array(), 0, tmp_bb1.position());
-                tmpBuff.putBytes(tmp_bb2.array(), 0, tmp_bb2.position());
-                PutBuff(thrd_ctx, tmpBuff, null);
-                //System.out.println("[DEBUG] DB_EV_USERLIST: " + tmp_size);
-            } else if (tmp_ev_type == tmpEv.DB_EV_NEWSHOT) {
-                String tmpMsg = tmpEv.get_str();
-                tmpBuff = GetBuff(thrd_ctx, null);
-                if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
-                tmpBuff.InitSrvReply(REQUEST_TYPE_TRACEINVALIDATEONE, 1 + 4*1 + tmpMsg.length(), 1 + 4*1 + tmpMsg.length());
-                tmpBuff.putByte((byte)tmpMsg.length());
-                tmpBuff.putString(tmpMsg);
-                tmpBuff.putInt(0);
-                PutBuff(thrd_ctx, tmpBuff, null);
-                //System.out.println("[DEBUG] REQUEST_TYPE_TRACEINVALIDATEONE <" + tmpMsg + "> in " + db_name + " sent OK.");
-            } else if (tmp_ev_type == tmpEv.DB_EV_UGC_SHOT_UPD) {
-                String tmpMsg = tmpEv.get_str();
-                tmpBuff = GetBuff(thrd_ctx, null);
-                if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
-                tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP, 4 + tmpMsg.length() + 1 + 0 + 1, 4 + tmpMsg.length() + 1 + 0 + 1);
-                tmpBuff.putPasString(tmpMsg);
-                tmpBuff.putInt(-2);
-                tmpBuff.putPasString("");
-                PutBuff(thrd_ctx, tmpBuff, null);
-                //System.out.println("[DEBUG] REQUEST_TYPE_UGC_REP <" + tmpMsg + "> in " + db_name + " sent OK.");
-            } else if (tmp_ev_type == tmpEv.DB_EV_UGC_LIST_UPD) { // YYY
-                tmpBuff = GetBuff(thrd_ctx, null);
-                tmpBuff.InitSrvReply(REQUEST_TYPE_UGC_REP, 4 + 0 + 1 + 0 + 1, 4 + 0 + 1 + 0 + 1);
-                tmpBuff.putPasString("");
-                tmpBuff.putInt(tmpEv.get_int());
-                tmpBuff.putPasString("");
-                PutBuff(thrd_ctx, tmpBuff, null);
-                //System.out.println("[DEBUG] REQUEST_TYPE_UGC_REP in " + db_name + " sent OK.");
-            } else if ((tmp_ev_type == tmpEv.DB_EV_TRACEUPD) || (tmp_ev_type == tmpEv.DB_EV_TRACEUPD_ARR) || (tmp_ev_type == tmpEv.DB_EV_TRACEDEL_ARR)) {
-                int tmp_id = 0, tmp_id_count = 1;
-                int[] tmp_ids = null;
-                if ((tmp_ev_type == tmpEv.DB_EV_TRACEUPD_ARR) || (tmp_ev_type == tmpEv.DB_EV_TRACEDEL_ARR)) {
-                    tmp_ids = tmpEv.get_int_ar().clone(); // Arrays.copyOf(thisIds, thisIds.length);
-                    tmp_id_count = tmp_ids.length;
-                } else {
-                    tmp_id = tmpEv.get_int();
-                    tmp_ids = new int[1];
-                    tmp_ids[0] = tmp_id;
-                }
-                String tmpMsg = tmpEv.get_str();
-
-                //if ((tmp_ev_type == tmpEv.DB_EV_TRACEUPD_ARR) || (tmp_ev_type == tmpEv.DB_EV_TRACEUPD)) {
-                //System.out.print("[DEBUG] " + CallerNetAddr() + " Invalidate ids " + tmpMsg + ": ");
-                //for (int q=0; q < tmp_id_count; q++) System.out.print(tmp_ids[q] + ", ");
-                //System.out.println(" ");
-                //}
-                int tmp_processed_count = 0;
-                if (tmp_ev_type != tmpEv.DB_EV_TRACEDEL_ARR) tmp_processed_count = ResumeTraceRequests(tmpMsg, tmp_ids);
-                tmp_need_resume = (tmp_processed_count > 0);
-                //System.out.println("[DEBUG] tmp_id_count=" + tmp_id_count + " tmp_processed_count=" + tmp_processed_count);
-                if (tmp_id_count > tmp_processed_count) {
-                    tmpBuff = GetBuff(thrd_ctx, null);
-                    if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
-                    byte tmp_notify_code = REQUEST_TYPE_TRACEINVALIDATEONE;
-                    if (tmp_ev_type == tmpEv.DB_EV_TRACEDEL_ARR) tmp_notify_code = REQUEST_TYPE_TRACEREMOVED;
-                    tmpBuff.InitSrvReply(tmp_notify_code, 1 + 4*(tmp_id_count-tmp_processed_count) + tmpMsg.length(), 1 + 4*(tmp_id_count-tmp_processed_count) + tmpMsg.length());
-                    tmpBuff.putByte((byte)tmpMsg.length());
-                    tmpBuff.putString(tmpMsg);
-                    for (int tmp_i=0; tmp_i < tmp_id_count; tmp_i++)
-                        if (tmp_ids[tmp_i] != 0) {
-                            tmpBuff.putInt(tmp_ids[tmp_i]);
-                            //System.out.print("{" + tmp_ids[tmp_i] + "}");
-                        }
-                    PutBuff(thrd_ctx, tmpBuff, null);
-                    //System.out.println("[DEBUG] REQUEST_TYPE_TRACEINVALIDATEONE <" + tmpMsg + ">, " + (tmp_id_count - tmp_processed_count) + " sent OK.");
-                }
-            }
-            synchronized(TalkMsgQueue) {
-                for (int tmp_i=1; tmp_i<TalkMsgQueueFill; tmp_i++) TalkMsgQueue[tmp_i-1] = TalkMsgQueue[tmp_i];
-                TalkMsgQueue[TalkMsgQueueFill-1] = null;
-                TalkMsgQueueFill--;
-                tmp_msg_count = TalkMsgQueueFill;
-            }
-        } while (0 != tmp_msg_count);
-        return tmp_need_resume;
-
-    }
-
-    private boolean NeedToSendTalkMsg() {
-        synchronized(TalkMsgQueue) { return (TalkMsgQueueFill > 0); }
-    }
-
     public void AddGeneralEvent(Tum3Db origin_db, GeneralDbDistribEvent ev, String thisReceiverName, String thisEchoName) {
+
+        //if (null != ev) if (ev.get_type() == GeneralDbDistribEvent.DB_EV_UGC_RESPONSE) Tum3Logger.DoLogGlb(true, "[DEBUG] AddGeneralEvent (DB_EV_UGC_RESPONSE)");
 
         // We are usually interested in our db-originating events or masterdb-originating events.
         if ((origin_db != null) && (dbLink == null)) return; // Just in case.
@@ -1979,12 +1722,6 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
     }
 
-    private void WakeupMain() {
-
-        Owner.WakeupMain();
-
-    }
-
     private void Process_PingHighlevel(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
         OutgoingBuff tmpBuff = null;
         tmpBuff = GetBuff(thrd_ctx, ctx);
@@ -2008,7 +1745,31 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         GetTracesContinue(thrd_ctx, null);
     }
 
-    private void ExecuteReq(byte thrd_ctx, byte req_code, byte[] req_body, int req_trailing_len) throws Exception {
+    protected boolean getLoginFailedState() {
+
+        return LoginFailedState;
+
+    }
+
+    protected long getLoginFailedAt() {
+
+        return LoginFailedAt;
+
+    }
+
+    protected boolean getWasAuthorized() {
+
+        return WasAuthorized;
+
+    }
+
+    protected String getLogPrefixName() {
+
+        return db_name;
+
+    }
+
+    protected void ExecuteReq(byte thrd_ctx, byte req_code, byte[] req_body, int req_trailing_len) throws Exception {
 
         if ((REQUEST_TYPE_REPORTAVAILVERSION == req_code) || (REQUEST_TYPE_REPORTAVAILVERSION_FULL == req_code) || (REQUEST_TYPE_REPORTAVAILVERSION_64 == req_code) || (REQUEST_TYPE_REPORTAVAILVERSION_FULL_64 == req_code)) 
             Process_ReportAvailVer(thrd_ctx, null, req_code);
@@ -2038,79 +1799,6 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         else {
             Tum3Logger.DoLog(db_name, true, "WARNING: unknown request, code=" + Integer.toHexString(req_code & 0xFF) + " len=" + req_trailing_len + ";" + " Session: " + DebugTitle());
         }
-    }
-
-    private int Bytes4int(byte b0, byte b1, byte b2, byte b3) {
-        return ((int)b0 & 0xFF) + (((int)b1 & 0xFF) << 8) + (((int)b2 & 0xFF) << 16) + (((int)b3 & 0xFF) << 24);
-    }
-
-    public void SendToServer(byte thrd_ctx, ByteBuffer buf) throws Exception {
-        try {
-            SendToServerInternal(thrd_ctx, buf);
-        } catch (Exception e) {
-            Tum3Logger.DoLog(db_name, false, "FATAL: Closing in SendToServer because: " + Tum3Util.getStackTrace(e));
-            Owner.ShutdownSrvLink("Exception in SrvLink.SendToServer: " + Tum3Util.getStackTrace(e));
-            throw new Exception("[aq2j] FATAL: Closing in SendToServer because: " + e);
-        }
-    }
-
-    public void SendOOBToServer(String buf) throws Exception {
-        try {
-            SendOOBToServerInternal(buf);
-        } catch (Exception e) {
-            Tum3Logger.DoLog(db_name, false, "FATAL: Closing in SendOOBToServer because: " + Tum3Util.getStackTrace(e));
-            Owner.ShutdownSrvLink("Exception in SrvLink.SendOOBToServer: " + Tum3Util.getStackTrace(e));
-            throw new Exception("[aq2j] FATAL: Closing in SendOOBToServer because: " + e);
-        }
-    }
-
-    private void SendOOBToServerInternal(String buf) throws Exception {
-        String tmp_str = buf;
-        //System.out.println("[aq2j] DEBUG: SendOOBToServerInternal(): got '" + tmp_str + "'");
-        String tmp_prev_str = oob_msg_remainder; // TODO!!! Verify if some synchronization is needed for oob_msg_remainder ?
-        tmp_str = tmp_prev_str + tmp_str;
-        StringBuffer tmp_buff = new StringBuffer(tmp_str);
-        while (tmp_buff.length() >= 8) {
-            String tmp_substr = tmp_buff.substring(0, 8);
-            tmp_buff.delete(0, 8);
-            String tmp_substr1 = tmp_substr.substring(0, 4);
-            String tmp_substr2 = tmp_substr.substring(4, 8);
-            int tmp_found_code = -1;
-            try {
-                tmp_found_code = Integer.parseInt(tmp_substr2);
-            } catch (Exception ingored) { }
-            if ((tmp_found_code >= 0) && (tmp_substr1.equals("REPL"))) {
-                boolean tmp_dbg_confirmed = false;
-                if (keepalive_sent_oob && (tmp_found_code == keepalive_code_sent)) {
-                    keepalive_sent_oob = false;
-                    last_client_activity_time = System.currentTimeMillis();
-                    tmp_dbg_confirmed = true;
-                }
-                if (tmp_dbg_confirmed) {
-                    //System.out.println("[aq2j] DEBUG: SendOOBToServerInternal(): confirmed by '" + tmp_substr + "'");
-                }
-            }
-        }
-        oob_msg_remainder = tmp_buff.toString();
-        //if (count > 0) {
-        //  UpdateLastClientActivityTime();
-        //}
-    }
-
-    private String IntToStr4(int i) {
-        StringBuffer tmp_str = new StringBuffer("" + i);
-        while (tmp_str.length() < 4) tmp_str.insert(0, '0');
-        tmp_str.insert(0, "REQU");
-        return tmp_str.toString();
-    }
-
-    private String MakeOOBKeepAliveReq() {
-        keepalive_code_sent = keepalive_code_next;
-        keepalive_code_next++;
-        if ((keepalive_code_next) >= 10000) keepalive_code_next = 0;
-        keepalive_sent_oob = true;
-        //keepalive_sent_time = System.currentTimeMillis();
-        return IntToStr4(keepalive_code_sent); // "REQU0000";
     }
 
     private ShotWriteHelper currWritingShot() {
@@ -2325,146 +2013,21 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
     }
 
-    private void UpdateLastClientActivityTime() {
-        last_client_activity_time = System.currentTimeMillis();
-        //if (keepalive_sent_inline) { System.out.println(); System.out.println("[keepalive_sent_inline:=false]"); } // debug only!!!
-    }
+    protected int getKeepaliveTimeoutVal() {
 
-    private boolean OutBuffsEmpty() {
-
-        synchronized(OutBuffFullLock) {
-            return (0 == out_buffs_full_fill);
-        }
+        return CONST_KEEPALIVE_INTERVAL_SEC[db_index];
 
     }
 
-    private boolean NeedToRequestKeepalive(long sys_millis, boolean may_disconn) throws Exception {
+    protected int getOutBuffCountMax() {
 
-        if (LoginFailedState) {
-            if (may_disconn) {
-                if ((sys_millis - LoginFailedAt) > CONST_LOGIN_FAIL_PENDING_SEC*1000)
-                    throw new Exception("Incorrect username and/or password, aborting session (timeout).");
-                if (OutBuffsEmpty())
-                    throw new Exception("Incorrect username and/or password, aborting session (close).");
-            }
-            return false;
-        }
-        if (!WasAuthorized) if ((sys_millis - ConnectionStartedAt) > CONST_LOGIN_TIMEOUT_SEC*1000) {
-            if (may_disconn) throw new Exception("Timeout waiting for login completion, aborting session.");
-            return false;
-        }
-        //System.out.println("[aq2j] DEBUG: NeedToRequestKeepalive() sent=" + keepalive_sent + " elap=" + (sys_millis - last_client_activity_time) + " max=" + (2*CONST_KEEPALIVE_INTERVAL_SEC[db_index]*1000));
-        if ((sys_millis - last_client_activity_time) > 2*CONST_KEEPALIVE_INTERVAL_SEC[db_index]*1000) {
-            if (may_disconn) throw new Exception("Client does not reply to keepalive request, aborting session.");
-            return false;
-        }
+        return CONST_OUT_BUFF_COUNT_MAX[db_index];
 
-        return ((sys_millis - last_client_activity_time) > CONST_KEEPALIVE_INTERVAL_SEC[db_index]*1000);
-    }
-
-    private boolean DoSimpleReq(byte thrd_ctx, byte the_code, RecycledBuffContext ctx) throws Exception {
-        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, ctx, false);
-        if (null == tmpBuff) return false;
-        tmpBuff.InitSrvReply(the_code, 0, 0);
-        PutBuff(thrd_ctx, tmpBuff, ctx);
-        return true;
-    }
-
-    private boolean DoSendKeepaliveInline(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
-        //System.out.println("[aq2j] DEBUG: DoSendKeepaliveInline()");
-        if (DoSimpleReq(thrd_ctx, REQUEST_TYPE_ANYBODYTHERE, ctx)) {
-            keepalive_sent_inline = true;
-            //keepalive_sent_time = System.currentTimeMillis();
-            //System.out.println("[aq2j] DEBUG: DoSendKeepaliveInline() success.");
-            return true;
-        }
-        return false;
     }
 
     private boolean DoSendDownloadPaused(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
         return DoSimpleReq(thrd_ctx, REQUEST_TYPE_DOWNLOAD_PAUSED, ctx);
         //System.out.println("[aq2j] DEBUG: DoSendDownloadPaused.");
-    }
-
-    private void SendToServerInternal(byte thrd_ctx, ByteBuffer buf) throws Exception {
-        // This function may block until either all count is written or exception is raised.
-        int tmp_rem_count;
-        if (LoginFailedState) return;
-        while ((buf.remaining() > 0) || ((curr_stage == STAGE_TRAILING_BODY) && (0 == curr_remaining_bytes))) {
-            if (LoginFailedState) return;
-            tmp_rem_count = buf.remaining(); //count;
-            if (tmp_rem_count > curr_remaining_bytes) tmp_rem_count = curr_remaining_bytes;
-            if (curr_stage == STAGE_SIGN_4BYTES) {
-                //System.arraycopy(buf, tmp_pos, req_header, (4-curr_remaining_bytes), tmp_rem_count);
-                //tmp_pos += tmp_rem_count;
-                buf.get(req_header, (4-curr_remaining_bytes), tmp_rem_count);
-                curr_remaining_bytes -= tmp_rem_count;
-                if (curr_remaining_bytes == 0) {
-                    if ((REQUEST_SIGN1 == req_header[3]) && (REQUEST_SIGN2 == req_header[2]) && (REQUEST_SIGN3 == req_header[1])) {
-                        //System.out.println("[aq2j] DEBUG: signature OK.");
-                        curr_req_code = req_header[0];
-                        curr_stage = STAGE_TRAILING_LEN;
-                        curr_remaining_bytes = 4;
-                    } else {
-                        Tum3Logger.DoLog(db_name, true, "WARNING: got invalid req signature in SendToServer(): " + Integer.toHexString(req_header[0] & 0xFF) + " " +  Integer.toHexString(req_header[1] & 0xFF) + " " +  Integer.toHexString(req_header[2] & 0xFF) + " " +  Integer.toHexString(req_header[3] & 0xFF) + " from " + DebugTitle());
-                        throw new Exception("got invalid req signature in SendToServer()");
-                    }
-                }
-            } else if (curr_stage == STAGE_TRAILING_LEN) {
-                //System.arraycopy(buf, tmp_pos, req_size_holder, (4-curr_remaining_bytes), tmp_rem_count);
-                //tmp_pos += tmp_rem_count;
-                buf.get(req_size_holder, (4-curr_remaining_bytes), tmp_rem_count);
-                curr_remaining_bytes -= tmp_rem_count;
-                UpdateLastClientActivityTime();
-                if (curr_remaining_bytes == 0) {
-                    curr_req_trailing_len = Bytes4int(req_size_holder[0], req_size_holder[1], req_size_holder[2], req_size_holder[3]);
-                    if ((curr_req_trailing_len < 0) || (curr_req_trailing_len > CONST_TRAILING_BYTES_LIMIT)) {
-                        Tum3Logger.DoLog(db_name, true, "WARNING: invalid trailing len in SendToServer(): " + curr_req_trailing_len + ";" + " Session: " + DebugTitle());
-                        throw new Exception("got invalid trailing len " + curr_req_trailing_len + " in SendToServer()");
-                    }
-                    if (PreverifyReq(curr_req_code, curr_req_trailing_len)) {
-                        //System.out.println("[aq2j] DEBUG: trailing size = " + curr_req_trailing_len + " {" + req_size_holder[0] + "," + req_size_holder[1] + "," + req_size_holder[2] + "," + req_size_holder[3] + "}");
-                        curr_stage = STAGE_TRAILING_BODY;
-                        curr_remaining_bytes = curr_req_trailing_len;
-                        if (req_body != null) if (curr_req_trailing_len > req_body.length) {
-                            req_body = null;
-                        }
-                        if ((req_body == null) && (curr_req_trailing_len > 0)) req_body = new byte[curr_req_trailing_len];
-                    } else {
-                        Tum3Logger.DoLog(db_name, true, "WARNING: got invalid req signature in SendToServer(): " + Integer.toHexString(req_header[0] & 0xFF) + " " +  Integer.toHexString(req_header[1] & 0xFF) + " " +  Integer.toHexString(req_header[2] & 0xFF) + " " +  Integer.toHexString(req_header[3] & 0xFF) + "; Session: " + DebugTitle());
-                        throw new Exception("got invalid req signature in SendToServer()");
-                    }
-                }
-            } else if (curr_stage == STAGE_TRAILING_BODY) {
-                if (tmp_rem_count > 0) {
-                    //System.arraycopy(buf, tmp_pos, req_body, (curr_req_trailing_len - curr_remaining_bytes), tmp_rem_count);
-                    //tmp_pos += tmp_rem_count;
-                    buf.get(req_body, (curr_req_trailing_len - curr_remaining_bytes), tmp_rem_count);
-                    curr_remaining_bytes -= tmp_rem_count;
-                }
-                if (curr_remaining_bytes == 0) {
-                    curr_stage = STAGE_SIGN_4BYTES;
-                    curr_remaining_bytes = 4;
-                    //System.out.println("[aq2j] DEBUG: going to execute req_code=" + Integer.toHexString(curr_req_code & 0xFF) + " with length=" + curr_req_trailing_len);
-                    ExecuteReq(thrd_ctx, curr_req_code, req_body, curr_req_trailing_len);
-                }
-            } else {
-                Tum3Logger.DoLog(db_name, true, "Internal error: invalid curr_stage in SendToServer()" + "; Session: " + DebugTitle());
-                throw new Exception("invalid curr_stage in SendToServer()");
-            }
-        }
-
-    }
-
-    public boolean ReadFromServer2(byte thrd_ctx, ClientWriter outbound, boolean hurry) throws Exception {
-        // Returns true = "nothing left to do".
-        try {
-            return ReadFromServerInternal(thrd_ctx, outbound, hurry);
-        } catch (Exception e) {
-            Tum3Logger.DoLog(db_name, false, "FATAL: Closing in ReadFromServer because: " + Tum3Util.getStackTrace(e));
-            Owner.ShutdownSrvLink("Exception in SrvLink.ReadFromServer2: " + Tum3Util.getStackTrace(e));
-            throw new Exception("[aq2j] FATAL: Closing in ReadFromServer because: " + e);
-        }
     }
 
     public void ClientReaderTick(byte thrd_ctx, ClientWriter outbound) throws Exception {
@@ -2480,154 +2043,9 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
          */
         //System.out.print("" + my_dbg_serial);
 
-        if (NeedToSendTalkMsg() && outbound.isOpen()) TrySendTalkMessages(thrd_ctx); // Moved here from ReadFromServerInternal()
-
-        if (TalkMsgQueueOverflow) {
-            TalkMsgQueueOverflow = false;
-            _NewMessageBoxCompat(thrd_ctx, "Internal error: TalkMsgQueue overflow. CONST_MAX_TALK_OUT_QUEUE needs to be increased.", true);
-        }
-
         if (null != currWritingShotHelper) currWritingShotHelper.tick();
 
-        NeedToRequestKeepalive(System.currentTimeMillis(), true);
-        //System.out.print("[aq2j] ClientReaderTick(): tmp_need_req=" + tmp_need_req + ", need_req_keepalive=" + need_req_keepalive + ", keepalive_sent=" + keepalive_sent);
-
-    }
-
-    private boolean ReadFromServerInternal(byte thrd_ctx, ClientWriter outbound, boolean hurry) throws Exception {
-        // Reminder. This is only called from the main thread (THRD_INTERNAL).
-        //   However, OutBuffFullLock and OutBuffEmptyLock still should be protected
-        //    by synchronized() because GetBuff() might be called from another thread due to aq3h.
-        // Reminder: This is called by data consumer (sender) only when it is guaranteed ready to consume some data.
-        // Reminder: due to elimination of multithreaded worker, blocking is never performed.
-        // Returns true = "nothing left to do".
-
-        //System.out.print("?");
-        int tmp_filled_count = 0;
-        boolean tmp_need_req_keepalive;
-        //long tmp_dbg_t0, tmp_dbg_t1, tmp_dbg_t2, tmp_dbg_t3;
-        //tmp_dbg_t0 = System.currentTimeMillis();
-
-        tmp_need_req_keepalive = false;
-
-        //System.out.println("[aq2j] ReadFromServerInternal(): need_req_keepalive=" + need_req_keepalive);
-        if (!hurry && (!keepalive_sent_inline || (!keepalive_sent_oob && SupportOOB))) {
-            tmp_need_req_keepalive = NeedToRequestKeepalive(System.currentTimeMillis(), false);
-            //System.out.print("[aq2j] ReadFromServerInternal(): tmp_need_req=" + tmp_need_req + ", need_req_keepalive=" + need_req_keepalive + ", keepalive_sent=" + keepalive_sent);
-        }
-
-        if (/* !tmp_need_req_keepalive && */ (out_buff_now_sending == null)) // Removed the strange (or obsolete?) condition. What was that???
-            synchronized(OutBuffFullLock) {
-                if (0 < out_buffs_full_fill) {
-                    out_buff_now_sending = out_buffs_full[0];
-                    //System.out.println("[aq2j] ReadFromServerInternal(): new out_buff_now_sending");
-                }
-            }
-
-        if (tmp_need_req_keepalive && outbound.isOpen()) {
-            //System.out.println("[aq2j] ReadFromServerInternal(): sending keepalive...");
-            if (SupportOOB && !keepalive_sent_oob)
-                outbound.SendToClientAsOOB(MakeOOBKeepAliveReq());
-            if (!keepalive_sent_inline) {
-                boolean tmp_keepalive_sent_ok = DoSendKeepaliveInline(thrd_ctx, null); // Reminder: when hurry is set, it prohibits allocting yet more output here while waiting for buffers.
-                //System.out.println();
-                //System.out.println("[keepalive_sent_ok=" + tmp_keepalive_sent_ok + "]");
-            }
-        }
-
-        if (out_buff_now_sending == null) {
-            //System.out.print("A");
-            //tmp_dbg_t1 = System.currentTimeMillis();
-            //if ((tmp_dbg_t1 - tmp_dbg_t0) > 100) System.out.print("[A:" + (tmp_dbg_t1 - tmp_dbg_t0) + "]");
-            return true;
-        }
-
-        if (!outbound.isOpen()) {
-            //System.out.print("B");
-            //tmp_dbg_t1 = System.currentTimeMillis();
-            //if ((tmp_dbg_t1 - tmp_dbg_t0) > 100) System.out.print("[B:" + (tmp_dbg_t1 - tmp_dbg_t0) + "]");
-            return true;
-        }
-
-        //System.out.print("C");
-        //tmp_dbg_t1 = System.currentTimeMillis();
-        //if ((tmp_dbg_t1 - tmp_dbg_t0) > 100) System.out.print("[C:" + (tmp_dbg_t1 - tmp_dbg_t0) + "]");
-        tmp_filled_count = outbound.AcceptFrom(out_buff_now_sending); // out_buff_now_sending.SendTo(outbound);
-        //tmp_dbg_t2 = System.currentTimeMillis();
-        //if ((tmp_dbg_t2 - tmp_dbg_t1) > 100) System.out.print("<" + (tmp_dbg_t2 - tmp_dbg_t1) + ">");
-        //System.out.print("[fil=" + tmp_filled_count + "]");
-        if (0 == tmp_filled_count) throw new Exception("Internal error: outbound.AcceptFrom() did nothing");
-
-        if (out_buff_now_sending.SentAll()) {
-            //System.out.println("[aq2j] DEBUG: Sent completely buff size=" + out_buff_now_sending.SentCount());
-            out_buff_now_sending.CancelData();
-            boolean tmp_need_traces_continue = false;
-            boolean tmp_out_buff_was_recycled = false;
-            int tmp_dbg_hanging_out_trace_bytes = -1;
-            int tmp_dbg_hanging_out_trace_number = -1;
-            { // synchronized (PendingTraceList)
-                int tmp_size = out_buff_now_sending.GetTraceSize();
-                int tmp_number = out_buff_now_sending.GetTraceNumber();
-                hanging_out_trace_bytes -= tmp_size;
-                hanging_out_trace_number -= tmp_number;
-                tmp_dbg_hanging_out_trace_bytes = hanging_out_trace_bytes;
-                tmp_dbg_hanging_out_trace_number = hanging_out_trace_number;
-                if ((tmp_size > 0) || (tmp_number > 0) || NoPauseOut()) tmp_need_traces_continue = true;
-                //else System.out.print("[" + tmp_size + "/" + tmp_number + "]");
-            }
-            if (tmp_need_req_keepalive && outbound.isOpen() && !keepalive_sent_inline) {
-                tmp_need_traces_continue = false;
-                ctxRecycledReader.out_buff_for_send = out_buff_now_sending;
-                tmp_out_buff_was_recycled = DoSendKeepaliveInline(thrd_ctx, ctxRecycledReader);
-                //System.out.println(); 
-                //System.out.println("[keepalive_sent_ok2=" + tmp_out_buff_was_recycled + "]");
-            }
-            //if (tmp_need_traces_continue) System.out.print("Y");
-            //else System.out.print("N");
-            //System.out.println("[aq2j] DEBUG: in ReadFromServer(): hng=" + tmp_dbg_hanging_out_trace_bytes + "," + tmp_dbg_hanging_out_trace_number);
-            if (tmp_need_traces_continue) {
-                ctxRecycledReader.out_buff_for_send = out_buff_now_sending;
-                tmp_out_buff_was_recycled = GetTracesContinue(thrd_ctx, ctxRecycledReader);
-                //System.out.println("[aq2j] tmp_out_buff_was_recycled=" + tmp_out_buff_was_recycled);
-            }
-            synchronized(OutBuffFullLock) { 
-                for (int tmp_i=1; tmp_i < out_buffs_full_fill; tmp_i++)
-                    out_buffs_full[tmp_i-1] = out_buffs_full[tmp_i];
-                out_buffs_full_fill--;
-                if (tmp_out_buff_was_recycled) {
-                    out_buffs_full[out_buffs_full_fill] = out_buff_now_sending;
-                    out_buffs_full_fill++;
-                }
-            }
-            if (!tmp_out_buff_was_recycled) {
-                synchronized(OutBuffEmptyLock) {
-                    if (out_buffs_count <= CONST_OUT_BUFF_COUNT_MAX[db_index]) {
-                        out_buffs_empty[out_buffs_empty_fill] = out_buff_now_sending;
-                        out_buffs_empty_fill++;
-                        OutBuffEmptyLock.notify();
-                    } else {
-                        out_buffs_count--;
-                    }
-                }
-            }
-            out_buff_now_sending = null;
-            //System.out.println("[aq2j] ReadFromServerInternal(): out_buff_now_sending := null");
-        }
-
-        TrySendContinuationReq(thrd_ctx, null);
-
-        //System.out.print("{-" + PendingTraceList.size() + "}");
-        //if (out_buff_now_sending == null) System.out.print("s");
-        //else                              System.out.print("S");
-        //if (out_buffs_full_fill <= 0) System.out.print("f");
-        //else                              System.out.print("F");
-        //Tum3Util.SleepExactly(200);
-
-        //tmp_dbg_t1 = System.currentTimeMillis();
-        //if ((tmp_dbg_t1 - tmp_dbg_t0) > 100) System.out.print("[" + (tmp_dbg_t1 - tmp_dbg_t0) + "]");
-
-        //if ((out_buff_now_sending != null) || (out_buffs_full_fill > 0)) System.out.println("[DEBUG] out_buffs_full_fill=" + out_buffs_full_fill);
-        return ((out_buff_now_sending == null) && (out_buffs_full_fill <= 0));
+        super.ClientReaderTick(thrd_ctx, outbound);
     }
 
 }

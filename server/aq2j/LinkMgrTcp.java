@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -23,9 +23,9 @@ import java.nio.channels.*;
 
 
 public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWriter, AppStopHook {
-    private SrvLink sLink = null;
+    private SrvLinkBase sLink = null;
     private volatile SocketChannel sc;
-    private Selector sc_selector;
+    private volatile Selector sc_selector; // YYY
     private SelectionKey key;
     private int key_base = SelectionKey.OP_READ;
     private byte[] tmpOutputBuff;
@@ -39,9 +39,6 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
     private byte[] inpWebBuff;
     private ByteBuffer inpBB, outBB;
 
-    private final static String TUM3_CFG_max_inp_buff_kbytes = "max_inp_buff_kbytes";
-    private final static int CONST_MAX_INP_BUFF_KBYTES_default = 128;
-    private static int CONST_MAX_INP_BUFF_BYTES[] = InitMaxInpBuffConst(); // should be per-db now.
     private final static int CONST_MAX_INP_OOB_CHARS = 16;
 
     private int CONST_TCP_BUFF_SIZE = 1;
@@ -52,32 +49,18 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
     private final static int INTRL_DATA_FULL = 2;
 
     private String transp_caller = "";
-    private int db_index;
-    private String db_name;
+    SessionProducerTcp session_producer;
 
 
-    private static final int[] InitMaxInpBuffConst() {
-
-        int tmp_arr[] = new int[Tum3cfg.getGlbInstance().getDbCount()];
-        Tum3cfg cfg = Tum3cfg.getGlbInstance();
-        for (int tmp_i = 0; tmp_i < tmp_arr.length; tmp_i++) {
-            tmp_arr[tmp_i] = 1024 * Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_max_inp_buff_kbytes, CONST_MAX_INP_BUFF_KBYTES_default);
-            Tum3Logger.DoLog(cfg.getDbName(tmp_i), false, "DEBUG: CONST_MAX_INP_BUFF_BYTES=" + tmp_arr[tmp_i]);
-        }
-        return tmp_arr;
-
-    }
-
-    public LinkMgrTcp(int _db_idx, SocketChannel this_sc, int _tcp_buff_size) throws Exception
+    public LinkMgrTcp(SessionProducerTcp _session_producer, SocketChannel this_sc) throws Exception
     {
-        db_index = _db_idx;
-        db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
-        CONST_TCP_BUFF_SIZE = _tcp_buff_size;
+        session_producer = _session_producer;
+        CONST_TCP_BUFF_SIZE = session_producer.get_CONST_TCP_BUFF_SIZE(); // _tcp_buff_size;
         String tmp_ip = this_sc.socket().getInetAddress().getHostAddress().toString();
         String tmp_port = this_sc.socket().getPort() + "";
         if (!tmp_ip.isEmpty() && !tmp_port.isEmpty()) transp_caller = tmp_ip + ":" + tmp_port;
 
-        sLink = new SrvLink(_db_idx, this);
+        sLink = session_producer.newSrvLink(this); // new SrvLink(_db_idx, this); // YYY
 
         sc = this_sc;
         sc_selector = Selector.open();
@@ -112,6 +95,8 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
 
     public void ShutdownSrvLink(String reason) {
 
+        if (null == reason) reason = ""; // YYY
+        if (reason.isEmpty()) reason = "Empty disconnect reason: " + Tum3Util.getStackTraceAuto(); // YYY
         SetTerminate(reason);
 
     }
@@ -129,7 +114,10 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
         //  it will cause next select() to return immediately.
         // This creates potential risk of runaway loop.
 
-        sc_selector.wakeup();
+        try { // YYY Note. Sometimes sc_selector might be null (already or yet)
+            if (!is_terminating) // YYY Note. This check is not synchronized, so it might ocasionally miss. In such case exception will be caught anyway.
+                sc_selector.wakeup();
+        } catch (Exception ignored) { }
         //String tmp_dbg_ops = "<" + sLink.my_dbg_serial + ":?>";
         //System.out.print(tmp_dbg_ops);
 
@@ -230,7 +218,7 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
     }
 
     public void SendToClientAsOOB(String oobMsg) throws Exception {
-        Tum3Logger.DoLog(db_name, true, "FATAL: internal error: SendToClientAsOOB() is not supported here.");
+        Tum3Logger.DoLog(session_producer.getLogPrefixName(), true, "FATAL: internal error: SendToClientAsOOB() is not supported here.");
         throw new Exception("[aq2j] FATAL: internal error: SendToClientAsOOB() is not supported here.");
     }
 
@@ -268,7 +256,7 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
         String tmp_new_reason = "";
         try {
 
-            inpWebBuff = new byte[CONST_MAX_INP_BUFF_BYTES[db_index]];
+            inpWebBuff = new byte[session_producer.CONST_MAX_INP_BUFF_BYTES()];
             inpBB = ByteBuffer.wrap(inpWebBuff);
             tmpOutputBuff = new byte[CONST_TCP_BUFF_SIZE];
             outBB = ByteBuffer.wrap(tmpOutputBuff);
@@ -276,12 +264,12 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
 
             sc.configureBlocking(false);
             sc.setOption(StandardSocketOptions.SO_SNDBUF, CONST_TCP_BUFF_SIZE);
-            sc.setOption(StandardSocketOptions.SO_RCVBUF, CONST_MAX_INP_BUFF_BYTES[db_index]);
+            sc.setOption(StandardSocketOptions.SO_RCVBUF, session_producer.CONST_MAX_INP_BUFF_BYTES());
             key = sc.register(sc_selector, SelectionKey.OP_READ);
 
-            sLink.DoLink();
-
             boolean tmp_data_pending = false;
+
+            sLink.DoLink(); // YYY Moved a bit down, closer to "while".
 
             while (!MustShutdownSrvLink()) {
                 int tmp_last_read;
@@ -324,7 +312,7 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
         if (tmp_prev_reason.isEmpty() && !tmp_new_reason.isEmpty())
             tmp_prev_reason = tmp_new_reason;
 
-        Tum3Logger.DoLog(db_name, false, "Closing communication with tcp/" + transp_caller + " (" + tmp_prev_reason + ")");
+        Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "Closing communication with tcp*" + transp_caller + " (" + tmp_prev_reason + ")");
         sLink.CancelLink();
 
         try {
@@ -394,7 +382,7 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
 
         // Reminder: because sLink.ReadFromServer2() can consume substantial time (to read data from disk etc.), timeouts here are normal, not error.
         //if (tmp_timeout || (tmp_loop_counter > 200)) 
-        //  Tum3Logger.DoLog(db_name, true, "LOCKUP WARNING: counter=" + tmp_loop_counter + "; " + Tum3Util.getStackTraceAuto());
+        //  Tum3Logger.DoLog(session_producer.getLogPrefixName(), true, "LOCKUP WARNING: counter=" + tmp_loop_counter + "; " + Tum3Util.getStackTraceAuto());
 
         //if (hurry) System.out.println("[aq2j] exiting TrySendOut.");
         //System.out.print("-");

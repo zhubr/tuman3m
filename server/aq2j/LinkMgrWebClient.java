@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2022-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -10,9 +10,18 @@
  * OF ANY KIND.
  *
  */
-package aq2db;
+package aq2j;
 
-public interface a
-{
-    public final static int CurrentVerNum = 425;
+
+import java.nio.ByteBuffer;
+
+
+public class LinkMgrWebClient extends LinkMgrWeb {
+
+
+    public LinkMgrWebClient(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw)
+    {
+        super (_session_producer, _o_raw, null);
+    }
+
 }

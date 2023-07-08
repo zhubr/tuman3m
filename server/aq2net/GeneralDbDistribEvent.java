@@ -27,6 +27,8 @@ public class GeneralDbDistribEvent {
     public final static int DB_EV_USERLIST = 6;
     public final static int DB_EV_UGC_SHOT_UPD = 7;
     public final static int DB_EV_UGC_LIST_UPD = 8; // YYY
+    public final static int DB_EV_UGC_RESPONSE = 9; // YYY
+    public final static int DB_EV_UGC_REQUEST = 10; // YYY
 
     public final static int ID_WAS_WAITING = (1 << 30);
     public final static int ID_MASK = 0x1FFFFFFF;
@@ -35,9 +37,11 @@ public class GeneralDbDistribEvent {
 
     private int ev_type;
     private String ev_str;
-    private int ev_int = 0; // YYY
+    private String ev_str2; // YYY
+    private int ev_int = 0;
     private int[] ev_int_ar;
-    private ByteBuffer ev_bb;
+    private ByteBuffer ev_bb, ev_bb2;
+    private Object ev_handler;
 
 
     public GeneralDbDistribEvent(int _ev_type, String _ev_str) {
@@ -47,10 +51,19 @@ public class GeneralDbDistribEvent {
 
     }
 
-    public GeneralDbDistribEvent(int _ev_type, ByteBuffer _ev_bb) {
+    public GeneralDbDistribEvent(int _ev_type, String _ev_str, String _ev_str2) {
+
+        ev_type = _ev_type;
+        ev_str = _ev_str;
+        ev_str2 = _ev_str2;
+
+    }
+
+    public GeneralDbDistribEvent(int _ev_type, ByteBuffer _ev_bb, ByteBuffer _ev_bb2) {
 
         ev_type = _ev_type;
         ev_bb = _ev_bb;
+        ev_bb2 = _ev_bb2;
 
     }
 
@@ -66,6 +79,23 @@ public class GeneralDbDistribEvent {
 
         ev_type = _ev_type;
         ev_int = _ev_int;
+
+    }
+
+    public GeneralDbDistribEvent(int _ev_type, int _ev_int, String _ev_str, String _ev_str2, ByteBuffer _ev_bb) {
+
+        ev_type = _ev_type;
+        ev_int = _ev_int;
+        ev_str = _ev_str;
+        ev_str2 = _ev_str2;
+        ev_bb = _ev_bb;
+
+    }
+
+    public GeneralDbDistribEvent(int _ev_type, Object _ev_handler) {
+
+        ev_type = _ev_type;
+        ev_handler = _ev_handler;
 
     }
 
@@ -90,9 +120,22 @@ public class GeneralDbDistribEvent {
 
     }
 
+    public String get_str2() {
+
+        if (null == ev_str2) return "";
+        else return ev_str2;
+
+    }
+
     public int get_int() {
 
         return ev_int;
+
+    }
+
+    public Object get_handler() {
+
+        return ev_handler;
 
     }
 
@@ -105,6 +148,12 @@ public class GeneralDbDistribEvent {
     public ByteBuffer get_bb() {
 
         return ev_bb;
+
+    }
+
+    public ByteBuffer get_bb2() { // YYY
+
+        return ev_bb2;
 
     }
 

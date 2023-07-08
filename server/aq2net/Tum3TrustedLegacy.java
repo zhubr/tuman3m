@@ -39,6 +39,9 @@ public final class Tum3TrustedLegacy {
 
         prefix_list = Arrays.asList(tmp_prefix_list.split(","));
 
+        for (int i = 0; i < prefix_list.size(); i++) // YYY
+            if (prefix_list.get(i).startsWith("tcp/")) prefix_list.set(i, "tcp*" + prefix_list.get(i).substring(4)); // YYY
+
         //for (int i = 0; i < prefix_list.size(); i++) System.out.println("[DEBUG] Tum3TrustedLegacy: prefix " + i + " = <" + prefix_list.get(i) + ">");
 
     }

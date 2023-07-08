@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -45,9 +45,6 @@ class TumConnSocket implements TumConnIntf {
 public class TumServTCP extends Thread implements AppStopHook {
 
     private volatile boolean TerminateRequested = false;
-    private final static String TUM3_CFG_tcp_listen_port = "tcp_listen_port";
-    private final static String TUM3_CFG_tcp_listen_ip = "tcp_listen_ip";
-    private final static String TUM3_CFG_tcp_raw_out_buff_kbytes = "tcp_raw_out_buff_kbytes";
     private int CONST_TCP_DEF_LISTEN_PORT = 1000;
     private String CONST_TCP_DEF_LISTEN_IP = "";
     private int CONST_TCP_BUFF_SIZE = 128;
@@ -55,17 +52,15 @@ public class TumServTCP extends Thread implements AppStopHook {
     private ServerSocketChannel ssc;
     private Selector listen_selector;
     private SelectionKey key;
-    private int db_index;
-    private String db_name;
+    private SessionProducerTcp session_producer;
 
 
-    public TumServTCP(int _db_idx) {
+    public TumServTCP(SessionProducerTcp _session_producer) {
 
-        db_index = _db_idx;
-        db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
-        CONST_TCP_BUFF_SIZE = 1024 * Tum3cfg.getIntValue(db_index, true, TUM3_CFG_tcp_raw_out_buff_kbytes, CONST_TCP_BUFF_SIZE);
-        CONST_TCP_DEF_LISTEN_PORT = Tum3cfg.getIntValue(db_index, true, TUM3_CFG_tcp_listen_port, CONST_TCP_DEF_LISTEN_PORT);
-        CONST_TCP_DEF_LISTEN_IP = Tum3cfg.getParValue(db_index, true, TUM3_CFG_tcp_listen_ip, CONST_TCP_DEF_LISTEN_IP);
+        session_producer = _session_producer; // new SessionProducerStdTcp(_db_idx); // YYY
+        session_producer.CONST_TCP_BUFF_SIZE(CONST_TCP_BUFF_SIZE);
+        CONST_TCP_DEF_LISTEN_PORT = session_producer.CONST_TCP_DEF_LISTEN_PORT(CONST_TCP_DEF_LISTEN_PORT);
+        CONST_TCP_DEF_LISTEN_IP = session_producer.CONST_TCP_DEF_LISTEN_IP(CONST_TCP_DEF_LISTEN_IP);
 
         setDaemon(true);
         start();
@@ -74,8 +69,8 @@ public class TumServTCP extends Thread implements AppStopHook {
 
     private void StartListening() throws Exception {
 
-        Tum3Logger.DoLog(db_name, false, "tcp listening at <" + CONST_TCP_DEF_LISTEN_IP + ":" + CONST_TCP_DEF_LISTEN_PORT + ">");
-        Tum3Logger.DoLog(db_name, false, "CONST_TCP_BUFF_SIZE=" + CONST_TCP_BUFF_SIZE);
+        Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "tcp listening at <" + CONST_TCP_DEF_LISTEN_IP + ":" + CONST_TCP_DEF_LISTEN_PORT + ">");
+        Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "CONST_TCP_BUFF_SIZE=" + CONST_TCP_BUFF_SIZE);
 
         InetSocketAddress tmp_address;
         if (CONST_TCP_DEF_LISTEN_IP.isEmpty())
@@ -99,18 +94,18 @@ public class TumServTCP extends Thread implements AppStopHook {
                     //System.out.println("Connection received from " + tmp_caller);
                     //sc.close();
                     try {
-                        new LinkMgrTcp(db_index, sc, CONST_TCP_BUFF_SIZE).start();
+                        new LinkMgrTcp(session_producer, sc).start();
                     } catch (Exception e) {
-                        Tum3Logger.DoLog(db_name, true, "Failed to create LinkMgrTcp: " + e);
+                        Tum3Logger.DoLog(session_producer.getLogPrefixName(), true, "Failed to create LinkMgrTcp: " + e);
                         sc.close();
                     }
                 } else {
                     //System.out.println("Listener tick.");
                 }
             } while (!TerminateRequested);
-            Tum3Logger.DoLog(db_name, false, "Listening stopping normally...");
+            Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "Listening stopping normally...");
         } catch(Exception e){
-            Tum3Logger.DoLog(db_name, true, "TCP listening failed with: " + e);
+            Tum3Logger.DoLog(session_producer.getLogPrefixName(), true, "TCP listening failed with: " + e);
         }
         try {
             //mainSocket.close();
@@ -135,7 +130,7 @@ public class TumServTCP extends Thread implements AppStopHook {
                 StartListening();
             }
         } catch (Exception e) {
-            Tum3Logger.DoLog(db_name, true, "TCP listening will not be possible: " + e);
+            Tum3Logger.DoLog(session_producer.getLogPrefixName(), true, "TCP listening will not be possible: " + e);
         }
 
         AppStopHooker.RemoveHook(this);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -59,7 +59,7 @@ public class AppletMain implements AppStopHook {
 
         for (int tmp_i = 0; tmp_i < glb_cfg.getDbCount(); tmp_i++)
             if (glb_cfg.getDbTcpEnabled(tmp_i))
-                new TumServTCP(tmp_i);
+                new TumServTCP(new SessionProducerTcpStd(tmp_i)); // YYY
 
         while (!TerminateRequested) {
             try {

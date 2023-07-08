@@ -79,6 +79,8 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_TRIG_ALLOW = (byte)0xA9;
     public final static byte REQUEST_TYPE_UGC_REP = (byte)0xAC;
 
+    public final static byte REQUEST_TYPE_JSON = (byte)0xAD; // This is for both request and reply.
+
     // Special IDs
     public final static int CONST_ID_LIST_ALL = -1;
     public final static int CONST_ID_SHOT_HDR = -2;

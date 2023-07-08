@@ -32,16 +32,18 @@ public class Tum3UgcUpdParser {
           if      (tmp_str.startsWith("Comment=")) the_comment = tmp_str.substring("Comment=".length()).trim();
           else if (tmp_str.startsWith("Tags=")) the_tags = tmp_str.substring("Tags=".length()).trim();
         }
-//System.out.println("[DEBUG] Ugc parser <" + the_comment + "> <" + the_tags + ">");
+//Tum3Logger.DoLogGlb(true, "[DEBUG] Ugc parser <" + the_comment + "> <" + the_tags + ">");
         tags_list = new StringList(the_tags.split(","));
-        for (int i = tags_list.size() - 1; i > 0; i--) {
+        for (int i = tags_list.size() - 1; i >= 0; i--) { // YYY
             tags_list.set(i, tags_list.get(i).trim());
+//Tum3Logger.DoLogGlb(true, "[DEBUG] cleanup i=" + i + ", tag =<" + tags_list.get(i) + "> " + tags_list.get(i).length());
             if (tags_list.get(i).isEmpty()) tags_list.remove(i);
         }
 
         for (String tmp_str: tags_list) {
-//System.out.println("[DEBUG] Ugc parser tag=<" + tmp_str + ">");
+//Tum3Logger.DoLogGlb(true, "[DEBUG] Ugc parser tag=<" + tmp_str + ">");
         }
+//Tum3Logger.DoLogGlb(true, "[DEBUG] tags_list.size()=" + tags_list.size());
 
         StringBuffer tmp_buff = new StringBuffer();
         for (int i = 0; i < tags_list.size(); i++) {
@@ -145,6 +147,8 @@ public class Tum3UgcUpdParser {
 
     public StringList getTags() {
 
+        //Tum3Logger.DoLogGlb(true, "[DEBUG] Tum3UgcUpdParser.getTags: count=" + tags_list.size());
+        //for (int i = 0; i < tags_list.size(); i++) Tum3Logger.DoLogGlb(true, "[DEBUG] Tum3UgcUpdParser.getTags: tag=<" + tags_list.get(i) + ">");
         return tags_list;
     }
 

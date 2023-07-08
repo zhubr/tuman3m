@@ -13,9 +13,14 @@
 package aq2db;
 
 
-public interface UgcReplyHandler {
+public interface InterconInitiator
+{
+    public final static byte csDisconnected = 0;
+    public final static byte csConnecting = 1;
+    public final static byte csConnected = 2;
 
-    public void GenerateUgcReply(byte thrd_ctx, int _req_id, String _shot_name, String _err_msg, byte[] data) throws Exception;
+    public byte getConnStatus();
+    public String getDisconnReason();
+    public boolean ConnectToServer() throws Exception;
 
 }
-

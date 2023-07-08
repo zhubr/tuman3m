@@ -31,30 +31,16 @@ public class OutgoingBuff implements TumProtoConsts, OutBuffData {
     //private Object ContinuatorLock = new Object();
     private boolean in_continuator;
     private int curr_continuator_len;
-    private final static int CONST_MIN_OUT_BUFF_default = 1;  // kbytes.
-    private static int CONST_MIN_OUT_BUFF[] = InitMinOutBuffConst();  // Should be per-db now.
-    private final static String TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes";
     private long seg_ofs = 0;
     private int seg_size = 0;
-    private boolean is_last_seg = true;
-    private int db_index;
+    private boolean is_last_seg = true;    
+    private int const_min_out_buff; //private int db_index; // YYY
 
 
-    private final static int[] InitMinOutBuffConst() {
+    public OutgoingBuff(int _min_out_buff) { // YYY
 
-        int tmp_arr[] = new int[Tum3cfg.getGlbInstance().getDbCount()];
-        Tum3cfg cfg = Tum3cfg.getGlbInstance();
-        for (int tmp_i = 0; tmp_i < tmp_arr.length; tmp_i++) {
-            tmp_arr[tmp_i] = 1024*Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_min_out_buff_kbytes, CONST_MIN_OUT_BUFF_default);
-            Tum3Logger.DoLog(cfg.getDbName(tmp_i), false, "DEBUG: CONST_MIN_OUT_BUFF=" + tmp_arr[tmp_i]);
-        }
-        return tmp_arr;
-
-    }
-
-    public OutgoingBuff(int _db_idx) {
-
-        db_index = _db_idx;
+        //db_index = _db_idx;
+        const_min_out_buff = _min_out_buff;
 
     }
 
@@ -83,7 +69,7 @@ public class OutgoingBuff implements TumProtoConsts, OutBuffData {
         if (real_buff != null) if (real_buff.length < (8+realSize)) real_buff = null;
         if (real_buff == null) {
             int tmp_size = 8+realSize;
-            if (tmp_size < CONST_MIN_OUT_BUFF[db_index]) tmp_size = CONST_MIN_OUT_BUFF[db_index];
+            if (tmp_size < const_min_out_buff) tmp_size = const_min_out_buff;
             real_buff = new byte[tmp_size];
             byte_buff = ByteBuffer.wrap(real_buff);
             byte_buff.order(ByteOrder.LITTLE_ENDIAN);

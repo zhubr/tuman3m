@@ -1,1 +1,1 @@
-TUM3CONF=/opt/test/ java -Xms512m -Xmx1024m -cp aq2db.jar:aq2net.jar:aq3host.jar:aq2j.jar:aq2con.jar aq2con.AppletMain
+TUM3CONF=/opt/test/ java -Xms512m -Xmx1024m -cp json-java.jar:aq2db.jar:aq2net.jar:aq3host.jar:aq2j.jar:aq2con.jar aq2con.AppletMain
