@@ -15,11 +15,11 @@ package aq2db;
 
 public interface OutBuffContinuator {
 
-    public int getFullSizeX();
+    public long getFullSizeX();
 
     public void ForceXByte();
 
-    public int getPos();
+    public long getPos();
 
     public byte getEditedByte();
 

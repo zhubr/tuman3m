@@ -63,6 +63,7 @@ class SomeHeader {
 }
 
 class SignalHeaderClass extends SomeHeader {
+    int HSizeCorr; // YYY
     int HSize, HID;
     int HStatus;
     String hdrOriginalShotName;
@@ -71,7 +72,7 @@ class SignalHeaderClass extends SomeHeader {
     int SigUpdateCounter;
 
     public static int StaticSize() {
-        return 71; // 63;
+        return 76; // 71; // 63; // YYY
     }
 
     public void readAll() {
@@ -224,8 +225,8 @@ class HeaderWriterTraceSignPack extends HeaderWriter {
 
 abstract class BaseContinuator {
 
-    protected int myLength;
-    protected int writtenCount = 0;
+    protected long myLength; // YYY int --> long
+    protected long writtenCount = 0; // YYY int --> long
     protected boolean use_trailing_status = false;
 
     public boolean withTrailingStatus() {
@@ -246,13 +247,13 @@ abstract class BaseContinuator {
 
     }
 
-    public int getPos() {
+    public long getPos() {
 
         return writtenCount;
 
     }
 
-    public int getFullSizeX() {
+    public long getFullSizeX() {
 
         if (use_trailing_status) return myLength + 1;
         else return myLength;
@@ -271,7 +272,7 @@ class TraceReaderContinuator extends BaseContinuator implements OutBuffContinuat
     public final boolean with_warning;
 
 
-    public TraceReaderContinuator(Tum3Shot thisShot, String thisFName, RandomAccessFile thisFF, int thisLength, byte _edited, boolean _use_trailing_status, boolean _with_warning) {
+    public TraceReaderContinuator(Tum3Shot thisShot, String thisFName, RandomAccessFile thisFF, long thisLength, byte _edited, boolean _use_trailing_status, boolean _with_warning) {
         myFF = thisFF;
         myLength = thisLength;
         myShot = thisShot;
@@ -309,9 +310,10 @@ class TraceReaderContinuator extends BaseContinuator implements OutBuffContinuat
         //System.out.print(" ReadTo(" + was_error + "," + ofs + "," + count + "=" ); Tum3Util.SleepExactly(3000);
         if (!was_error) {
             try {
-                int tmp_count = myLength - writtenCount;
-                if (tmp_count > count) tmp_count = count;
-                if (tmp_count < 0)     tmp_count = 0;
+                long tmp_count_l = myLength - writtenCount;
+                if (tmp_count_l > count) tmp_count_l = count;
+                if (tmp_count_l < 0)     tmp_count_l = 0;
+                int tmp_count = (int)tmp_count_l; // YYY
                 if (null == myFF) {
                     Tum3Logger.DoLog(myShot.DbName(), true, "WARNING: <" + Thread.currentThread().getId() + "> TraceReaderContinuator.ReadTo(): myFF == null for '" + myFName);
                     was_error = true;
@@ -334,9 +336,10 @@ class TraceReaderContinuator extends BaseContinuator implements OutBuffContinuat
             }
         }
 
-        int tmp_count = myLength - writtenCount;
-        if (use_trailing_status) tmp_count++;
-        if (tmp_count > count) tmp_count = count;
+        long tmp_count_l = myLength - writtenCount;
+        if (use_trailing_status) tmp_count_l++;
+        if (tmp_count_l > count) tmp_count_l = count;
+        int tmp_count = (int)tmp_count_l; // YYY
         Arrays.fill(buff, ofs, ofs+tmp_count, (byte)0);
         writtenCount += tmp_count;
 
@@ -416,10 +419,10 @@ class ImmediateArrayContinuator extends BaseContinuator implements OutBuffContin
 
     public int ReadTo(byte[] buff, int ofs, int count) {
 
-        int tmp_count = myLength - writtenCount;
+        int tmp_count = (int)(myLength - writtenCount);
         if (tmp_count > count) tmp_count = count;
         if (tmp_count < 0)     tmp_count = 0;
-        System.arraycopy(myBuff, writtenCount, buff, ofs, tmp_count);
+        System.arraycopy(myBuff, (int)writtenCount, buff, ofs, tmp_count);
         writtenCount += tmp_count;
 
         if (use_trailing_status && (writtenCount == myLength) && (count > tmp_count)) {
@@ -464,6 +467,13 @@ public class Tum3Shot {
     private ByteArrayOutputStream new_zip_configs;
     private volatile int[] expected_ids = null;
 
+    private final static int min_hlen_ever = 32; // YYY
+    private final static int min_hlen_Fmt64Ver = 336; // YYY
+    private final static int ofs_HDataSize_old = 4*7; // YYY
+    private final static int ofs_HDataSize_new = 328; // YYY
+    private final static int ofs_HMetaDataSize_old = 304; // YYY
+    private final static int ofs_HMetaDataSize_new = 392; // YYY
+
 
     static class TraceMetaData extends HashMap<String, String> {
 
@@ -479,7 +489,10 @@ public class Tum3Shot {
                     if (tmp_in_val) {
                         curr_val = curr.toString();
                         curr = new StringBuffer();
-                        if (!curr_name.isEmpty()) put(curr_name, curr_val);
+                        if (!curr_name.isEmpty()) {
+                            put(curr_name, curr_val);
+//System.out.print("[DEBUG] <" + curr_name + ">=<" + curr_val + ">");
+                        }
                     } else {
                         curr_name = curr.toString();
                         curr = new StringBuffer();
@@ -498,7 +511,9 @@ public class Tum3Shot {
         //public boolean ReadOnly;
         public RandomAccessFile raf = null;
         private String Fname;
-        int tmpNewHeaderSizeInFile, tmpFiledHSize, tmpBuffSize;
+        int tmpNewHeaderSizeInFile, tmpFiledHSize;
+        long tmpBuffSize; // YYY
+        boolean hdr_is_v1 = false; // YYY
         SignalHeaderClass tmpFirstHeader;
         byte WasEdited;
         private final String db_name;
@@ -539,10 +554,11 @@ public class Tum3Shot {
             tmpNewHeaderSizeInFile = tmpBB0.getInt();
             tmpFirstHeader = new SignalHeaderClass();
             tmpFirstHeader.HSize = tmpNewHeaderSizeInFile;
-            if (tmpFirstHeader.HSize > buff0.length) tmpFirstHeader.HSize = buff0.length;
-            raf.readFully(buff0, 0, tmpFirstHeader.HSize-4);
+            tmpFirstHeader.HSizeCorr = tmpNewHeaderSizeInFile; // YYY
+            if (tmpFirstHeader.HSizeCorr > buff0.length) tmpFirstHeader.HSizeCorr = buff0.length; // YYY
+            raf.readFully(buff0, 0, tmpFirstHeader.HSizeCorr-4); // YYY
             tmpBB0.clear();
-            tmpBB0.limit(tmpFirstHeader.HSize-4);
+            tmpBB0.limit(tmpFirstHeader.HSizeCorr-4); // YYY
             tmpFirstHeader.buf = tmpBB0;
             tmpFirstHeader.readAll();
             if ((tmpFirstHeader.HID != _SignalId) || (!tmpFirstHeader.hdrOriginalShotName.equals(_shotName)) || (tmpFirstHeader.HStatus != 0)) {
@@ -580,18 +596,31 @@ public class Tum3Shot {
             else
                 WasEdited = (byte)tmpSigUpdateCounter;
 
-            raf.seek(4+tmpNewHeaderSizeInFile);
+            raf.seek(4 + tmpNewHeaderSizeInFile);
             raf.readFully(buff0, 0, 4);
-            tmpBB0.clear();
-            tmpBB0.limit(4);
+            tmpBB0.clear(); tmpBB0.limit(4);
             tmpFiledHSize = tmpBB0.getInt();
-            if (tmpFiledHSize < 32)
-                throw new Exception("UnifiedTraceHeader size is too small in '" + FileName() + "'");
-            raf.seek(4+tmpNewHeaderSizeInFile+4*7);
-            raf.readFully(buff0, 0, 4);
-            tmpBB0.clear();
-            tmpBB0.limit(4);
-            tmpBuffSize = tmpBB0.getInt();
+            if (tmpFiledHSize < min_hlen_ever)
+                throw new Exception("UnifiedTraceHeader size is too small (" + tmpFiledHSize + ") in '" + FileName() + "'");
+            if (tmpFiledHSize >= min_hlen_Fmt64Ver) { // YYY
+                raf.seek(4 + tmpNewHeaderSizeInFile + 12*4+256); // old HMetaDataSize
+                raf.readFully(buff0, 0, 4);
+                tmpBB0.clear(); tmpBB0.limit(4);
+                if (0 == tmpBB0.getInt()) { // YYY
+                    hdr_is_v1 = true; // YYY
+                    raf.seek(4 + tmpNewHeaderSizeInFile + ofs_HDataSize_new); // new HDataSize
+                    raf.readFully(buff0, 0, 8);
+                    tmpBB0.clear(); tmpBB0.limit(8);
+                    tmpBuffSize = tmpBB0.getLong(); // YYY
+                }
+            }
+            if (!hdr_is_v1) { // YYY
+                raf.seek(4 + tmpNewHeaderSizeInFile + ofs_HDataSize_old); // old HDataSize
+                raf.readFully(buff0, 0, 4);
+                tmpBB0.clear();
+                tmpBB0.limit(4);
+                tmpBuffSize = tmpBB0.getInt();
+            }
             //System.out.println("[aq2j] DEBUG: <" + Thread.currentThread().getId() + "> UnifiedTraceHeader in '" + Fname + "': HSize=" + tmpFiledHSize + " HDataSize=" + tmpBuffSize);
 
         }
@@ -1162,8 +1191,18 @@ public class Tum3Shot {
             if (tmp_FF.raf == null) return;
 
             int tmp_datasize_hdr = 0;
-            if (_header.remaining() >= 8*4) {
-                _header.position(7*4);
+            boolean tmp_size_done = false; // YYY
+            if (_header.remaining() >= min_hlen_Fmt64Ver) { // YYY
+                _header.position(12*4+256); // old HMetaDataSize
+                if (0 == _header.getInt()) {
+                    _header.position(ofs_HDataSize_new);
+                    tmp_datasize_hdr = _header.getInt(); // YYY
+                    tmp_size_done = true; // YYY
+                }
+                _header.position(0);
+            }
+            if (!tmp_size_done) if (_header.remaining() >= (ofs_HDataSize_old+4)) { // YYY
+                _header.position(ofs_HDataSize_old);
                 tmp_datasize_hdr = _header.getInt();
                 _header.position(0);
             }
@@ -1313,6 +1352,8 @@ public class Tum3Shot {
         if (_ThisID == 0) return "illegal signal id specified";
         if (!Valid) return "data directory seems invalid";
 
+        if (_upd_arr.length > CONST_DENSITY_FSIZE_LIMIT) return "data size seems way too big"; // YYY
+
         boolean tmp_as_volatile = true;
         byte tmp_in_progress = 8;
         synchronized(CacheIds) {
@@ -1324,6 +1365,9 @@ public class Tum3Shot {
                 return "Cache record is empty for the required density update.";
             if ((tmp_cache_val & 1) != 0) tmp_as_volatile = false;
             if ((tmp_cache_val & 2) != 0) tmp_as_volatile = true;
+
+            if (!tmp_as_volatile) return "Updating of non-volatile data is not possible."; // YYY
+
             if (tmp_as_volatile) tmp_in_progress = 8;
             else  tmp_in_progress = 4;
             if ((tmp_cache_val & tmp_in_progress) != 0)
@@ -1346,6 +1390,7 @@ public class Tum3Shot {
         try {
             String tmp_bup_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + ".001";
             String tmp_std_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + ".000";
+            String tmp_tmp_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + ".003"; // YYY
             boolean tmp_bup_ok = false;
 
             // Check for editlocked tag.
@@ -1354,19 +1399,22 @@ public class Tum3Shot {
             try {
                 tmpCheckLocked = new UtilCreateFile1(DbName(), tmp_std_fname, false);
                 tmpCheckLocked.readHeaders(shotName, _ThisID);
-                if (tmpCheckLocked.tmpFiledHSize > 308) {
-                    byte[] tmp_buff1 = new byte[tmpCheckLocked.tmpFiledHSize];
-                    ByteBuffer tmpBB1 = ByteBuffer.wrap(tmp_buff1);
-                    tmpBB1.order(ByteOrder.LITTLE_ENDIAN);
-                    tmpCheckLocked.raf.seek(4 + tmpCheckLocked.tmpNewHeaderSizeInFile);
-                    tmpCheckLocked.raf.readFully(tmp_buff1, 0, tmpCheckLocked.tmpFiledHSize);
-                    tmpBB1.limit(tmpCheckLocked.tmpFiledHSize);
-                    tmpBB1.position(304); // .HMetaDataSize
-                    int tmpHMetaDataSize = tmpBB1.getInt();
-                    int tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - 308;
+                if ((!tmpCheckLocked.hdr_is_v1 && (tmpCheckLocked.tmpFiledHSize > (ofs_HMetaDataSize_old+4)))
+                 ||  (tmpCheckLocked.hdr_is_v1 && (tmpCheckLocked.tmpFiledHSize > (ofs_HMetaDataSize_new+8)))
+                ) {
+                    int tmp_metasz_ofs = ofs_HMetaDataSize_old; // old .HMetaDataSize
+                    if (tmpCheckLocked.hdr_is_v1) tmp_metasz_ofs = ofs_HMetaDataSize_new; // new .HMetaDataSize
+                    tmpCheckLocked.raf.seek(4 + tmpCheckLocked.tmpNewHeaderSizeInFile + tmp_metasz_ofs); // YYY
+                    int tmpHMetaDataSize = tmpCheckLocked.raf.readInt();
+                    if (tmpCheckLocked.hdr_is_v1) tmpCheckLocked.raf.readInt(); // YYY
+                    int tmpMetaLimit;
+                    if (!tmpCheckLocked.hdr_is_v1)
+                        tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - ofs_HMetaDataSize_old - 4;
+                    else
+                        tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - ofs_HMetaDataSize_new - 8; // YYY
                     if (tmpHMetaDataSize > tmpMetaLimit) tmpHMetaDataSize = tmpMetaLimit;
                     byte[] tmpMetaAsBytes = new byte[tmpHMetaDataSize];
-                    tmpBB1.get(tmpMetaAsBytes);
+                    tmpCheckLocked.raf.readFully(tmpMetaAsBytes); // YYY
                     tmpMeta = new TraceMetaData(tmpMetaAsBytes);
                 }
             } finally {
@@ -1391,12 +1439,16 @@ public class Tum3Shot {
                 tmp_f_src.readFully(tmp_copy_buff);
                 tmp_f_src.close();
                 tmp_f_src = null;
-                tmp_f_dst = new RandomAccessFile(tmp_bup_fname, "rw");
+                tmp_f_dst = new RandomAccessFile(tmp_tmp_fname /* tmp_bup_fname */, "rw"); // YYY
                 tmp_f_dst.write(tmp_copy_buff);
                 tmp_f_dst.setLength(tmp_fsize);
                 tmp_f_dst.close();
                 tmp_f_dst = null;
 
+                if (!new File(tmp_tmp_fname).renameTo(new File(tmp_bup_fname))) { // YYY
+                    String tmp_err_msg = "Temporary new file <" + tmp_tmp_fname + "> could not be renamed into <" + tmp_bup_fname + ">";
+                    Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
+                }
             }
 
             if (new File(tmp_bup_fname).exists()) {
@@ -1405,7 +1457,7 @@ public class Tum3Shot {
                 tmpFF.readHeaders(shotName, _ThisID);
                 if ((tmpFF.tmpFiledHSize > 0) && (tmpFF.tmpBuffSize > 0) && (tmpFF.tmpBuffSize < CONST_DENSITY_FSIZE_LIMIT)) {
                     tmpFF.raf.seek(4 + tmpFF.tmpNewHeaderSizeInFile);
-                    int tmp_full_size = tmpFF.tmpFiledHSize + tmpFF.tmpBuffSize;
+                    int tmp_full_size = tmpFF.tmpFiledHSize + (int)tmpFF.tmpBuffSize;
                     tmp_bup_ok = (tmpFF.raf.skipBytes(tmp_full_size) == tmp_full_size);
                 }
                 tmpFF.close();
@@ -1429,7 +1481,7 @@ public class Tum3Shot {
                     tmpFF.tmpFirstHeader.writeAll();
                     tmpFF.raf.seek(4);
                     tmp_writing_started = true;
-                    tmpFF.raf.write(tmpFF.tmpFirstHeader.buf.array(), 0, tmpFF.tmpFirstHeader.HSize);
+                    tmpFF.raf.write(tmpFF.tmpFirstHeader.buf.array(), 0, tmpFF.tmpFirstHeader.HSizeCorr);
                     tmpFF.raf.seek(4 + tmpFF.tmpNewHeaderSizeInFile + tmpFF.tmpFiledHSize);
                     tmpFF.raf.write(_upd_arr);
                     //System.out.println("[DEBUG] Updated density written in '" + shotName + "' id=" + _ThisID);
@@ -1438,7 +1490,7 @@ public class Tum3Shot {
                     tmpFF.tmpFirstHeader.buf.clear();
                     tmpFF.tmpFirstHeader.writeAll();
                     tmpFF.raf.seek(4);
-                    tmpFF.raf.write(tmpFF.tmpFirstHeader.buf.array(), 0, tmpFF.tmpFirstHeader.HSize);
+                    tmpFF.raf.write(tmpFF.tmpFirstHeader.buf.array(), 0, tmpFF.tmpFirstHeader.HSizeCorr);
 
                     tmp_result = "";
 

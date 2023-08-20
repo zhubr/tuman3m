@@ -21,8 +21,20 @@ Signal file structure:
 | wMinute           | 16-bit LE unsigned integer | Minute when this shot was made                        |
 | wSecond           | 16-bit LE unsigned integer | Second when this shot was made                        |
 | SigUpdateCounter  | 32-bit LE unsigned integer | reserved, do not use                                  |
+| Reserved_pad      | 5 bytes                    | reserved, do not use (should be all zeroes)           |
 +-------------------+----------------------------+-------------------------------------------------------+
 +------------ Data header -------------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| Data Header Size  | 32-bit LE unsigned integer | This header's size in bytes                           |
+| Data Header body  | Depends on header revision,| Depends on header revision, see below.                |
+|                   |   see below.               |                                                       |
++-------------------+----------------------------+-------------------------------------------------------+
++---------------- Data ----------------------------------------------------------------------------------|
++-------------------+----------------------------+-------------------------------------------------------+
+| (depends on data type)                         |                                                       |
++------------------------------------------------+-------------------------------------------------------+
+
+Data header rev 0:
 +-------------------+----------------------------+-------------------------------------------------------+
 | Data Header Size  | 32-bit LE unsigned integer | This header's size in bytes                           |
 | HType             | 32-bit LE unsigned integer | 50 = 16-bit signed int array,                         |
@@ -42,11 +54,38 @@ Signal file structure:
 | HAqVersion        | 32-bit LE unsigned integer | Software version                                      |
 | HMetaDataSize     | 32-bit LE unsigned integer | Size of optional ascii name-value array               |
 | HMetaData         | HMetaDataSize bytes        | Optional ascii name-value array                       |
+| HReserved1        | 32-bit LE unsigned integer | Reserved, do not use                                  |
+| HUseFmt64Ver      | 32-bit LE unsigned integer | Indicates header revision for validation, should be 0 |
 +-------------------+----------------------------+-------------------------------------------------------+
-+---------------- Data ----------------------------------------------------------------------------------|
+
+Data header rev 1:
 +-------------------+----------------------------+-------------------------------------------------------+
-| (depends on data type)                         |                                                       |
-+------------------------------------------------+-------------------------------------------------------+
+| Data Header Size  | 32-bit LE unsigned integer | This header's size in bytes                           |
+| H64Reserved01     | 32 bytes                   | Reserved, do not use                                  |
+| HComment1Len      | 8-bit unsigned integer     | Length of comment string                              |
+| HComment1         | 255 bytes                  | Comment as ascii characters                           |
+| H64Reserved02     | 20 bytes                   | Reserved, do not use                                  |
+| HUseFmt64Ver      | 32-bit LE unsigned integer | Indicates header revision for validation, should be 1 |
+| H64Rsrvd_01       | 32-bit LE unsigned integer | Reserved, do not use (should be zero)                 |
+| HType             | 32-bit LE unsigned integer | 50 = 16-bit signed int array,                         |
+|                   |                            | 51 = 32-bit floating point array,                     |
+|                   |                            | 52 = 32-bit signed integer array,                     |
+|                   |                            | 55 = 8-bit unsigned integer array                     |
+| HAqVersion        | 32-bit LE unsigned integer | Software version                                      |
+| HDataSize         | 64-bit LE unsigned integer | Total size of data array, in bytes                    |
+| HCount            | 64-bit LE unsigned integer | Point count (used for oscillograms)                   |
+| HTact             | 64-bit double precision    | Time between neighbour points in array, milliseconds  |
+| HDataStart        | 64-bit double precision    | Time of 1st point in array, milliseconds              |
+| HCalibr           | 64-bit double precision    | Data calibration to physical units (multiplier)       |
+| HZeroline         | 64-bit double precision    | Data zero line value (to be automatically subtracted) |
+| HCalibr2Milivolts | 64-bit double precision    | Data calibration to millivolts, if applicable         |
+| HDataStartExtern  | 64-bit double precision    | External delay, milliseconds (optional)               |
+| HMetaDataSize     | 32-bit LE unsigned integer | Size of optional ascii name-value array               |
+| H64Rsrvd_02       | 32-bit LE unsigned integer | Reserved, do not use (should be zero)                 |
+| HMetaData         | HMetaDataSize bytes        | Optional ascii name-value array                       |
+| HReserved1        | 32-bit LE unsigned integer | Reserved, do not use                                  |
+| HReserved2        | 32-bit LE unsigned integer | Reserved, do not use                                  |
++-------------------+----------------------------+-------------------------------------------------------+
 
 
 Shot common file structure:

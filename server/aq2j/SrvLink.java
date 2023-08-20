@@ -87,6 +87,8 @@ public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf,
         213, 126, 228, 60, 99, 87, 70, 194, 216, 93, 224, 214
     };
 
+    private final static int min_supported_app_ver = 374; // YYY
+
     private static volatile int dbg_serial = 0;
     public int my_dbg_serial = 0;
 
@@ -544,10 +546,10 @@ public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf,
                             Segmented_data_cancel();
                         }
                         tmp_is_segment = true;
-                    } else {
-                        tmp_this_trace_len = tmp_trace_data.getFullSizeX();
+                    } else if (tmp_trace_data.getFullSizeX() <= Integer.MAX_VALUE) { // YYY
+                        tmp_this_trace_len = (int)tmp_trace_data.getFullSizeX();
                         tmpBuff.SetSegment(0, tmp_this_trace_len, true);
-                    }
+                    } else throw new Exception("Attempted to put > 2Gb in one go."); // YYY
 
                     /*
 
@@ -1105,7 +1107,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             }
     }
 
-    private void Process_AgentInfo(byte[] req_body, int req_trailing_len) throws Exception {
+    private void Process_AgentInfo(byte thrd_ctx, byte[] req_body, int req_trailing_len) throws Exception {
         /*
   TAgentInfo = packed record
     RCompatVersion: longint;
@@ -1118,13 +1120,16 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if (tmpBB.remaining() >= 4) RLinkKilobits = tmpBB.getInt();
         if (tmpBB.remaining() >= 4) RCompatFlags = tmpBB.getInt();
 
-        FDoModerateDownloadRate = (RCompatVersion >= 231);
-        use_tracecome_x = (RCompatVersion >= 332);
-        segmented_data_allowed = (RCompatVersion >= 373);
+        FDoModerateDownloadRate = true; // (RCompatVersion >= 231); // YYY
+        use_tracecome_x = true; // (RCompatVersion >= 332); // YYY
+        segmented_data_allowed = true; // (RCompatVersion >= 373); // YYY
         if (RLinkKilobits == 0) RLinkKilobits = 100*1024;
         if (RLinkKilobits < 500) RLinkKilobits = 500;
         if (RLinkKilobits > 2*1024*1024) RLinkKilobits = 2*1024*1024;
         FModeratedDownloadBytes = RLinkKilobits << 6; // Reminder: this sets approx 6 Mbytes for 100Mbit link.
+
+        if ((RCompatVersion > 0) && (RCompatVersion < min_supported_app_ver))
+            _NewMessageBoxCompat(thrd_ctx, "IMPORTANT! This program version is critically outdated! It may not work correctly. Please update.", false); // YYY
 
         //System.out.println("[aq2j] DEBUG: client version = " + RCompatVersion + "; kilobits = " + RLinkKilobits);
     }
@@ -1778,7 +1783,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         else if ((REQUEST_TYPE_UPLOAD_ONE == req_code) || (REQUEST_TYPE_UPLOAD_ONE_VAR == req_code)) Process_UploadOne(thrd_ctx, req_body, req_trailing_len, null, REQUEST_TYPE_UPLOAD_ONE_VAR == req_code);
         else if (REQUEST_TYPE_DELETE_ONE_VAR == req_code) Process_DeleteOne(thrd_ctx, req_body, req_trailing_len, null);
         else if (REQUEST_TYPE_UPLOAD_END_HINT == req_code) Process_UploadEndHint();
-        else if (REQUEST_TYPE_AGENT_INFO == req_code) Process_AgentInfo(req_body, req_trailing_len);
+        else if (REQUEST_TYPE_AGENT_INFO == req_code) Process_AgentInfo(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_FEATURESELECT == req_code) Process_FeatureSelect(req_body, req_trailing_len);
         else if (REQUEST_TYPE_DIRECTORYCALL == req_code) Process_GetDirList(thrd_ctx, req_body, req_trailing_len, null);
         else if (REQUEST_TYPE_ANYBODYTHERE == req_code) Process_PingHighlevel(thrd_ctx, null);

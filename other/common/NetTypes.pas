@@ -2,9 +2,9 @@
  * Copyright 2003-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
- * License version 2. Please see LICENSE file at the uppermost 
+ * License version 2. Please see LICENSE file at the uppermost
  * level of the repository.
- * 
+ *
  * Unless required by applicable law or agreed to in writing, this
  * software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES
  * OF ANY KIND.
@@ -13,6 +13,8 @@
 unit NetTypes;
 
 interface
+
+{$DEFINE HDR64_DEFAULT }
 
 const
   REQUEST_SIGN1  = $F0;
@@ -107,6 +109,8 @@ const
   REQUEST_TYPE_UGC_REQ = $AB; { YYY }
   REQUEST_TYPE_UGC_REP = $AC; { YYY }
 
+  REQUEST_TYPE_JSON = $AD; { YYY }
+
   DTYPE_SmallInt = 50; { 16-bit, signed integer }
   DTYPE_Single   = 51; { 32-bit, floating point }
   DTYPE_LongInt  = 52; { 32-bit, signed integer }
@@ -128,6 +132,11 @@ const
   bcmTalkMsg     = $43129803;
   bcmServiceMsg  = $43129804;
 
+  dcRmtReply_1 = 1; { YYY }
+  { dcRmtReply_2 = 2; } { YYY } { Obsolete. Do not use. }
+  { dcRmtReply_3 = 3; } { YYY } { Obsolete. Do not use. }
+  dcRmtReply_10 = 10; { YYY }
+  dcRmtReply_11 = 11; { YYY }
   dcRmtReply_22 = 22; { YYY }
 
   dcRmtReq_20 = 20;
@@ -172,6 +181,10 @@ const
   tum3misc_file_per_request = 5; { YYY }
 
   FLEXCMD_hotstart = 'hotstart'; { YYY }
+
+  max_hlen_legacy   = 316; { YYY }
+  min_hlen_Fmt64Ver = 336; { YYY }
+  hdr64_default = {$IFDEF HDR64_DEFAULT } true {$ELSE } false {$ENDIF}; { YYY }
 
 
 function DataPointSize(_Dtype: integer): integer;
@@ -254,7 +267,51 @@ type
     HMetaDataSize: longint;
    { HMetaData: packed array[1..0] of byte; }
     HReserved1: longint;
+
+    HUseFmt64Ver: longint; { YYY } { For legacy TUnifiedTraceHeader should be 0. Otherwise TUnifiedTraceHdr64 is used. }
   end;
+
+{$IFDEF FPC }
+  {$DEFINE HAVE_INT64 }
+{$ELSE }
+  {$IFDEF WIN32 }
+    {$DEFINE HAVE_INT64 }
+  {$ELSE }
+    {$IFDEF WIN64 }
+      {$DEFINE HAVE_INT64 }
+    {$ENDIF }
+  {$ENDIF }
+{$ENDIF }
+
+  PUnifiedTraceHdr64 = ^TUnifiedTraceHdr64; 
+  TUnifiedTraceHdr64 = packed record
+    HSize: longint; H64Zero_01: longint; { Header size } { H64Zero_01 should be zero }
+    H64Zero_02, H64Zero_03: longint; { H64Zero_02 and H64Zero_03 should be zero }
+    H64Ones_04, H64Ones_05: longint; { H64Ones_04 and H64Ones_05 should be all bits 1's }
+    H64Zero_06, H64Zero_07: longint; { H64Zero_06 and H64Zero_07 should be zero }
+
+    H64Ones_08: longint; { H64Ones_08 should be all bits 1's }
+    HComment1: string[255];
+    H64Ones_09: longint; { H64Ones_09 should be all bits 1's }
+
+    H64Ones_10, H64Ones_11: longint; { H64Ones_10 and H64Ones_11 should be all bits 1's }
+    H64Zero_12: longint; H64Ones_13: longint; { H64Zero_12 should be zero, H64Ones_13 should be all bits 1's }
+
+    HUseFmt64Ver: longint; H64Rsrvd_01: longint; { H64Rsrvd_01 should be zero at this time }
+
+    HType: longint; HAqVersion: longint;
+    {$IFDEF HAVE_INT64 } HDataSize: int64; {$ELSE } HDataSize: longint; HDataSize_hi: longint; {$ENDIF }
+    {$IFDEF HAVE_INT64 } HCount: int64; {$ELSE } HCount: longint; HCount_hi: longint; {$ENDIF }
+    HTact, HDataStart, HCalibr, HZeroline, HCalibr2Milivolts, HDataStartExternal: double;
+
+    HMetaDataSize: longint; H64Rsrvd_02: longint; { H64Rsrvd_02 should be zero at this time }
+   { HMetaData: packed array[1..0] of byte; }
+    HReserved1: longint; HReserved2: longint;
+  end;
+
+
+  TUniTraceHdrIntrnl = {$IFDEF HDR64_DEFAULT } TUnifiedTraceHdr64 {$ELSE } TUnifiedTraceHeader {$ENDIF}; { YYY }
+  PUniTraceHdrIntrnl = ^TUniTraceHdrIntrnl; { YYY }
 
   { The following section is very experimental and may not be reliable yet. }
 
@@ -293,6 +350,11 @@ type
   end;
 
 function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUnifiedTraceHeader): double;
+function ConvertFrom64(src: PUnifiedTraceHdr64; dst: PUnifiedTraceHeader): boolean; { YYY }
+function ConvertTo64(src: PUnifiedTraceHeader; dst: PUnifiedTraceHdr64): boolean; { YYY }
+procedure PreInitHdr(phdr: PUniTraceHdrIntrnl); { YYY }
+procedure PreInitHdr64(phdr: PUnifiedTraceHdr64); { YYY }
+function GetHdrDataSize(p: PUnifiedTraceHeader): {$IFDEF HAVE_INT64 } int64 {$ELSE } longint {$ENDIF };
 
 implementation
 
@@ -357,6 +419,95 @@ begin
     DTYPE_LongInt : DataPointSize := 4;
     DTYPE_Splines : DataPointSize := 1; { YYY }
   end;
+end;
+
+
+function ConvertFrom64(src: PUnifiedTraceHdr64; dst: PUnifiedTraceHeader): boolean;
+begin
+  ConvertFrom64 := false;
+  if (src = nil) or (dst = nil) then
+    exit;
+  if (src^.H64Zero_01 <> 0) or (src^.HSize < min_hlen_Fmt64Ver) then
+    exit;
+{$IFNDEF HAVE_INT64 }
+  if (src^.HCount_hi <> 0) or (src^.HDataSize_hi <> 0) then
+    exit;
+{$ENDIF }
+  dst^.HUseFmt64Ver := 0;
+  dst^.HSize := SizeOf(TUnifiedTraceHeader) + src^.HMetaDataSize;
+  dst^.HType := src^.HType;
+  dst^.HCount := src^.HCount;
+  dst^.HTact := src^.HTact;
+  dst^.HDataStart := src^.HDataStart;
+  dst^.HCalibr := src^.HCalibr;
+  dst^.HZeroline := src^.HZeroline;
+  dst^.HDataSize := src^.HDataSize;
+  dst^.HCalibr2Milivolts := src^.HCalibr2Milivolts;
+  dst^.HComment1 := src^.HComment1;
+  dst^.HDataStartExternal := src^.HDataStartExternal;
+  dst^.HAqVersion := src^.HAqVersion;
+  dst^.HMetaDataSize := src^.HMetaDataSize;
+  move(src^.HReserved1, dst^.HReserved1, src^.HMetaDataSize + SizeOf(src^.HReserved1));
+  ConvertFrom64 := true;
+end;
+
+
+function ConvertTo64(src: PUnifiedTraceHeader; dst: PUnifiedTraceHdr64): boolean; { YYY }
+begin
+  ConvertTo64 := false;
+  if (src = nil) or (dst = nil) then
+    exit;
+
+  dst^.HSize := SizeOf(TUnifiedTraceHdr64) + src^.HMetaDataSize;
+  dst^.HType := src^.HType;
+  dst^.HCount := src^.HCount;
+  dst^.HTact := src^.HTact;
+  dst^.HDataStart := src^.HDataStart;
+  dst^.HCalibr := src^.HCalibr;
+  dst^.HZeroline := src^.HZeroline;
+  dst^.HDataSize := src^.HDataSize;
+  dst^.HCalibr2Milivolts := src^.HCalibr2Milivolts;
+  dst^.HComment1 := src^.HComment1;
+  dst^.HDataStartExternal := src^.HDataStartExternal;
+  dst^.HAqVersion := src^.HAqVersion;
+  dst^.HMetaDataSize := src^.HMetaDataSize;
+  move(src^.HReserved1, dst^.HReserved1, src^.HMetaDataSize + SizeOf(src^.HReserved1));
+
+  ConvertTo64 := true;
+end;
+
+
+procedure PreInitHdr64(phdr: PUnifiedTraceHdr64);
+begin
+  with phdr^ do
+  begin
+    HUseFmt64Ver := 1;
+    H64Rsrvd_01 := 0;
+    H64Ones_04 := -1;
+    H64Ones_05 := -1;
+    H64Ones_08 := -1;
+    H64Ones_09 := -1;
+    H64Ones_10 := -1;
+    H64Ones_11 := -1;
+    H64Ones_13 := -1;
+  end;
+end;
+
+
+procedure PreInitHdr(phdr: PUniTraceHdrIntrnl);
+begin
+{$IFDEF HDR64_DEFAULT }
+  PreInitHdr64(pointer(phdr));
+{$ENDIF }
+end;
+
+
+function GetHdrDataSize(p: PUnifiedTraceHeader): {$IFDEF HAVE_INT64 } int64 {$ELSE } longint {$ENDIF };
+begin
+  GetHdrDataSize := p^.HDataSize;
+  if p^.HSize >= min_hlen_Fmt64Ver then
+    if p^.HMetaDataSize = 0 then
+      GetHdrDataSize := PUnifiedTraceHdr64(p)^.HDataSize; { YYY }
 end;
 
 
