@@ -42,7 +42,7 @@ type
   TResWriter = object(TTumDbWriter)
     constructor Init;
     function ResOpen(_FName: string): boolean; virtual;
-    function  ResBegin(_Id: longint; var _Header: TUnifiedTraceHeader): boolean; virtual;
+    function  ResBegin(_Id: longint; _pHeader: PUnifiedTraceHeader): boolean; virtual;
     procedure ResWriteData(var Buff; Cnt, Base: longint); virtual;
     procedure ResClose; virtual;
   private
@@ -50,7 +50,8 @@ type
     DataStartPos: longint;
     FNewHeader: TNewHeader;
     FDirectory: array [1.. MaxEntries] of TDirEntry;
-    FpEntryHeader: PUnifiedTraceHeader;
+    { FpEntryHeader: PUnifiedTraceHeader; }
+    FEntryHeader_HType: longint; { YYY }
   end;
   PResWriter = ^TResWriter;
 
@@ -98,11 +99,11 @@ begin
   FDirOffset := 4 + FNewHeader.HSize;
   FDirectory[1].thisOffset := FDirOffset + j;
   BlockWrite(FileDat, FDirectory, j);
-  FpEntryHeader := nil;
+  { FpEntryHeader := nil; }
 end;
 
 
-function TResWriter.ResBegin(_Id: longint; var _Header: TUnifiedTraceHeader): boolean;
+function TResWriter.ResBegin(_Id: longint; _pHeader: PUnifiedTraceHeader): boolean;
 var
   FDataSize: longint;
   NewPos: longint;
@@ -110,13 +111,26 @@ begin
   result := false;
   { Prepare Signal Header }
 
-  if FpEntryHeader <> nil then
+  if _pHeader = nil then
+    exit; { YYY }
+  if _pHeader^.HSize < 32 then
+    exit;
+  FEntryHeader_HType := _pHeader^.HType; { YYY }
+  FDataSize := _pHeader^.HDataSize; { YYY }
+  if _pHeader^.HSize >= min_hlen_Fmt64Ver then
+    if _pHeader^.HMetaDataSize = 0 then
+    begin
+      FDataSize := PUnifiedTraceHdr64(_pHeader)^.HDataSize;
+      FEntryHeader_HType := PUnifiedTraceHdr64(_pHeader)^.HType;
+    end;
+
+  { if FpEntryHeader <> nil then
     FreeMem(FpEntryHeader, FpEntryHeader^.HSize);
-  GetMem(FpEntryHeader, _Header.HSize);
-  Move(_Header, FpEntryHeader^, _Header.HSize);
+  GetMem(FpEntryHeader, _pHeader.HSize);
+  Move(_pHeader^, FpEntryHeader^, _pHeader^.HSize); }
 
  { FEntryHeader.HZeroline := - FEntryHeader.HZeroline; } { XXX fixme !!! }
-  FDataSize := FpEntryHeader^.HDataSize;
+  { FDataSize := FpEntryHeader^.HDataSize; }
 
   { Prepare file header }
 
@@ -127,7 +141,7 @@ begin
   FDirectory[NewPos].thisStatus := 0;
   FDirectory[NewPos].thisID := _Id;
   if NewPos < FNewHeader.DirLimit then
-    FDirectory[NewPos+1].thisOffset := FDirectory[NewPos].thisOffset + FpEntryHeader^.HSize + FDataSize;
+    FDirectory[NewPos+1].thisOffset := FDirectory[NewPos].thisOffset + _pHeader^.HSize + FDataSize;
   FNewHeader.DirCount := NewPos;
   Seek(FileDat, 4);
   BlockWrite(FileDat, FNewHeader, FNewHeader.HSize);
@@ -136,26 +150,26 @@ begin
   { Write Signal Header }
 
   Seek(FileDat, FDirectory[NewPos].thisOffset);
-  BlockWrite(FileDat, FpEntryHeader^, FpEntryHeader^.HSize);
+  BlockWrite(FileDat, _pHeader^, _pHeader^.HSize);
 
-  DataStartPos := FDirectory[NewPos].thisOffset + FpEntryHeader^.HSize;
+  DataStartPos := FDirectory[NewPos].thisOffset + _pHeader^.HSize;
   result := true;
 end;
 
 
 procedure TResWriter.ResWriteData(var Buff; Cnt, Base: longint);
 begin
-  Seek(FileDat, DataStartPos + Base * DataPointSize(FpEntryHeader^.HType));
-  BlockWrite(FileDat, Buff, Cnt * DataPointSize(FpEntryHeader^.HType));
+  Seek(FileDat, DataStartPos + Base * DataPointSize(FEntryHeader_HType { FpEntryHeader^.HType })); { YYY }
+  BlockWrite(FileDat, Buff, Cnt * DataPointSize(FEntryHeader_HType { FpEntryHeader^.HType })); { YYY }
  { writeln(DataStartPos + Base * DataPointSize(FEntryHeader.HType) + Cnt * DataPointSize(FEntryHeader.HType)); }
 end;
 
 
 procedure TResWriter.ResClose;
 begin
-  if FpEntryHeader <> nil then
+  { if FpEntryHeader <> nil then
     FreeMem(FpEntryHeader, FpEntryHeader^.HSize);
-  FpEntryHeader := nil;
+  FpEntryHeader := nil; }
   Close(FileDat);
 end;
 

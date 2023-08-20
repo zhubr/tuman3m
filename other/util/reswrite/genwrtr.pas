@@ -20,7 +20,7 @@ uses
 type
   TTumDbWriter = object
     function ResOpen(_FName: string): boolean; virtual; abstract;
-    function  ResBegin(_Id: longint; var _Header: TUnifiedTraceHeader): boolean; virtual; abstract;
+    function  ResBegin(_Id: longint; _pHeader: PUnifiedTraceHeader): boolean; virtual; abstract;
     procedure ResWriteData(var Buff; Cnt, Base: longint); virtual; abstract;
     procedure ResClose; virtual; abstract;
     procedure AutoCreateMaster; virtual;

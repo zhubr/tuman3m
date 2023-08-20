@@ -380,7 +380,7 @@ type
   pSingleArr = ^TSingleArr;
   pByteArr = ^TByteArr;
 var
-  tmpCalibr: single;
+  tmpCalibr, tmpZeroline: double; { YYY }
 begin
   if (_data = nil) or (_ph = nil) then
   begin
@@ -393,13 +393,20 @@ begin
     exit;
   end;
   tmpCalibr := _ph^.HCalibr;
+  tmpZeroline := _ph^.HZeroline; { YYY }
+  if _ph^.HSize >= min_hlen_Fmt64Ver then { YYY }
+    if _ph^.HMetaDataSize = 0 then { YYY }
+    begin
+      tmpCalibr := PUnifiedTraceHdr64(_ph)^.HCalibr; { YYY }
+      tmpZeroline := PUnifiedTraceHdr64(_ph)^.HZeroline; { YYY }
+    end;
   if tmpCalibr = 0 then
     tmpCalibr := 1;
   case _ph^.HType of
-    DTYPE_SmallInt: DataGetAsDouble := (pSmallintArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
-    DTYPE_Single:   DataGetAsDouble := (pSingleArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
-    DTYPE_LongInt:  DataGetAsDouble := (pLongintArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
-    DTYPE_Byte:     DataGetAsDouble := (pByteArr(_data)^[_ind] - _ph^.HZeroline) * tmpCalibr;
+    DTYPE_SmallInt: DataGetAsDouble := (pSmallintArr(_data)^[_ind] - tmpZeroline) * tmpCalibr;
+    DTYPE_Single:   DataGetAsDouble := (pSingleArr(_data)^[_ind] - tmpZeroline) * tmpCalibr;
+    DTYPE_LongInt:  DataGetAsDouble := (pLongintArr(_data)^[_ind] - tmpZeroline) * tmpCalibr;
+    DTYPE_Byte:     DataGetAsDouble := (pByteArr(_data)^[_ind] - tmpZeroline) * tmpCalibr;
   else
     begin
       DataGetAsDouble := -4e100;
