@@ -107,6 +107,7 @@ public class SrvLinkMetaSrv extends SrvLinkMeta {
                         WasAuthorized = true;
                         AuthorizedLogin = tmp_login;
                         InitDbAccess();
+                        dbLink.setOtherServerConnected(true); // YYY
                         //dbLink = Tum3Db.getDbInstance(getDbIndex());
                         //Tum3Broadcaster.addclient(dbLink, this);
 
@@ -115,6 +116,7 @@ public class SrvLinkMetaSrv extends SrvLinkMeta {
                         jo2.put(JSON_NAME_db, getLogPrefixName());
                         jo2.put(JSON_NAME_username, tmp_login);
                         FillUserList(jo2); // YYY
+                        jo2.put(JSON_NAME_server_info, dbLink.getThisServerInfo()); // YYY
                         Send_JSON(thrd_ctx, ctx, jo2);
                     } else {
                         Tum3Logger.DoLog(getLogPrefixName(), true, "Warning: duplicate intercon auth attempted."); // YYY

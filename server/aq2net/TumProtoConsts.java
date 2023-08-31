@@ -74,10 +74,11 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_CONFIGSSAVE = (byte)0x96;
     public final static byte REQUEST_TYPE_CONFIGSUPLRES = (byte)0x97;
     public final static byte REQUEST_TYPE_DENSITY_UPD = (byte)0x98;
-    public final static byte REQUEST_TYPE_INFORMATION_TEXT = (byte)0x99;
+    public final static byte REQUEST_TYPE_INFORMATION_TEXT = (byte)0x99; // Pushed actually.
     public final static byte REQUEST_TYPE_MISC_FETCH = (byte)0xA2;
     public final static byte REQUEST_TYPE_TRIG_ALLOW = (byte)0xA9;
     public final static byte REQUEST_TYPE_UGC_REP = (byte)0xAC;
+    public final static byte REQUEST_TYPE_SERVERINFO = (byte)0xAF; // Pushed actually.
 
     public final static byte REQUEST_TYPE_JSON = (byte)0xAD; // This is for both request and reply.
 

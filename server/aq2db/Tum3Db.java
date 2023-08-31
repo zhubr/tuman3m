@@ -16,6 +16,7 @@ import java.util.*;
 import java.io.*;
 import java.nio.*;
 
+import aq2net.Tum3Broadcaster;
 
 public class Tum3Db implements Runnable, AppStopHook {
 
@@ -30,10 +31,12 @@ public class Tum3Db implements Runnable, AppStopHook {
     private final static int CONST_SkipForth = 1;
     private final static int CONST_DontSkip = 2;
 
+    private final static int CONST_SRVINFO_UPD_MINS = 15; // YYY
     private final static int CONST_SHOTS_WAIT_PERIOD = 1;      // Seconds
     private int CONST_SHOTS_DISPOSE_AFTER = 30;   // Seconds
     private int CONST_SHOTS_MAX_OPEN = 100;
     private final static String TUM3_CFG_db_root_volatile = "db_root_volatile";
+    private final static String TUM3_CFG_sync_state_root = "sync_state_root"; // YYY
     private final static String TUM3_CFG_max_shots_open = "max_shots_open";
     private final static String TUM3_CFG_unused_shot_close_delay = "unused_shot_close_delay";
     private final static String TUM3_CFG_master_db = "master_db";
@@ -41,6 +44,7 @@ public class Tum3Db implements Runnable, AppStopHook {
     private static Tum3Db[] DbInstance = null;
     private static Object DbCreationLock = new Object();
     private String DB_ROOT_PATH, DB_ROOT_PATH_VOL;
+    public final String SYNC_STATE_PATH; // YYY
     private StringList MasterList = null;
     private Object MasterListLock = new Object(), PostCreationLock = new Object();
     private boolean creation_complete = false;
@@ -51,8 +55,24 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     private int db_index;
     private String db_name, masterdb_name;
+    public final boolean isWriteable, withSyncState; // YYY
     private Tum3Db master_db = null;
     private Tum3UgcWorker ugc_worker = null; // YYY
+
+    private Object diag_lock = new Object(); // YYY
+    private int diag_free_space_gb = 0; // YYY
+    private boolean diag_free_space_found = false; // YYY
+    private boolean diag_raid_status_ok = false; // YYY
+    private boolean diag_raid_status_found = false; // YYY
+    private String diag_raid_detail = ""; // YYY
+    private Tum3Time diag_time; // YYY
+    private final boolean downlink_enabled; // YYY
+    private final boolean uplink_enabled; // YYY
+    private String OtherServerInfo = ""; // YYY
+    private volatile boolean OtherServerIsConnected = false; // YYY
+    private volatile Tum3Time OtherServer_last_time; // YYY
+    private long diag_next_update; // YYY
+    private int warn_free_space_gb = 0; // YYY
 
 
     protected Tum3Db(int _db_idx, String _masterdb_name) {
@@ -61,15 +81,21 @@ public class Tum3Db implements Runnable, AppStopHook {
         //  because it runs with a global lock hold.
         db_index = _db_idx;
         db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
+        isWriteable = Tum3cfg.isWriteable(db_index); // YYY
+        downlink_enabled = Tum3cfg.getGlbInstance().getDbDownlinkEnabled(db_index); // YYY
+        uplink_enabled = Tum3cfg.getGlbInstance().getDbUplinkEnabled(db_index); // YYY
         masterdb_name = _masterdb_name;
 
         openShots = new HashMap<String, Tum3Shot>();
         closingShots = new HashMap<String, Tum3Shot>();
         DB_ROOT_PATH = Tum3cfg.getParValue(db_index, false, Tum3cfg.TUM3_CFG_db_root);
         DB_ROOT_PATH_VOL = Tum3cfg.getParValue(db_index, false, TUM3_CFG_db_root_volatile);
+        SYNC_STATE_PATH = Tum3cfg.getParValue(db_index, false, TUM3_CFG_sync_state_root); // YYY
 
         CONST_SHOTS_MAX_OPEN = Tum3cfg.getIntValue(db_index, true, TUM3_CFG_max_shots_open, CONST_SHOTS_MAX_OPEN);
         CONST_SHOTS_DISPOSE_AFTER = Tum3cfg.getIntValue(db_index, true, TUM3_CFG_unused_shot_close_delay, CONST_SHOTS_DISPOSE_AFTER);
+
+        withSyncState = isWriteable && (SYNC_STATE_PATH.length() > 0); // YYY
     }
 
     public Tum3Db GetMasterDb() {
@@ -91,9 +117,15 @@ public class Tum3Db implements Runnable, AppStopHook {
             if (!creation_complete) {
                 creation_complete = true;
                 ugc_worker = Tum3UgcWorker.getUgcWorker(this); // YYY
-                Tum3Logger.DoLog(db_name, false, "DEBUG: Starting database '" + db_name + "' (data_path=" + DB_ROOT_PATH + ", data_path_volatile=" + DB_ROOT_PATH_VOL + ")");
+                Tum3Logger.DoLog(db_name, false, "Starting the database (data_path=" + DB_ROOT_PATH + ", data_path_volatile=" + DB_ROOT_PATH_VOL + ")" + (isWriteable? " as writable" : " as read-only"));
                 Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_SHOTS_MAX_OPEN=" + CONST_SHOTS_MAX_OPEN);
                 Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_SHOTS_DISPOSE_AFTER=" + CONST_SHOTS_DISPOSE_AFTER);
+                UpdateThisServerInfo(System.currentTimeMillis()); // YYY
+                warn_free_space_gb = Tum3cfg.getWarnFreeSpaceGb(db_index); // YYY
+                if (warn_free_space_gb > 0)
+                    Tum3Logger.DoLog(db_name, false, "Enabled free space warning at " + warn_free_space_gb + " Gb.");
+                else
+                    Tum3Logger.DoLog(db_name, false, "Note: no free space warning threshold was specified.");
             }
         }
     }
@@ -113,6 +145,13 @@ public class Tum3Db implements Runnable, AppStopHook {
                 Thread.sleep(CONST_SHOTS_DISPOSE_AFTER * (long)1000);
             } catch (InterruptedException e) { }
             DisposeUnusedShots(false);
+            if (!TerminateRequested) {
+                long curr_millis = System.currentTimeMillis();
+                if (curr_millis >= diag_next_update) {
+                    UpdateThisServerInfo(curr_millis); // YYY
+                    Tum3Broadcaster.DistributeFlag(this); // YYY
+                }
+            }
         }
         Tum3Logger.DoLog(db_name, false, "DEBUG: Tum3db ver " + a.CurrentVerNum + " exiting normally.");
         DisposeUnusedShots(true);
@@ -651,6 +690,201 @@ public class Tum3Db implements Runnable, AppStopHook {
 
         new UplinkScheduler(_initiator, this).WorkStart();
 
+    }
+
+    private void UpdateThisServerInfo(long _curr_millis) {
+
+        //Tum3Logger.DoLog(db_name, true, "[DEBUG] UpdateThisServerInfo()");
+
+        int tmp_free_space_gb = 0;
+        boolean tmp_free_space_found = false;
+        try {
+            if (DB_ROOT_PATH.length() > 0) {
+                String tmp_last_dir = "198001";
+                File dir = new File(DB_ROOT_PATH);
+                for (File file: dir.listFiles()) {
+                    if (file.isDirectory()) {
+                        String tmp_name = file.getName();
+                        if (Tum3Util.StrNumeric(tmp_name) && (4 == tmp_name.length())) {
+                            if ('9' == tmp_name.charAt(0)) tmp_name = "19" + tmp_name;
+                            else tmp_name = "20" + tmp_name;
+                            if (tmp_last_dir.compareTo(tmp_name) < 0) tmp_last_dir = tmp_name;
+                            //System.out.println("[aq2j] DEBUG: subdir '" + tmp_name + "' tmp_last_dir=" + tmp_last_dir);
+                        }
+                    }
+                }
+                tmp_last_dir = tmp_last_dir.substring(2);
+                File tmp_last_dir_obj = new File(DB_ROOT_PATH + tmp_last_dir);
+                long tmp_space_bytes = tmp_last_dir_obj.getUsableSpace();
+                tmp_free_space_found = (tmp_space_bytes > 0L);
+                tmp_free_space_gb = (int)(tmp_space_bytes >> 30);
+            }
+        } catch (Exception ignored) {}
+
+        //System.out.println("[aq2j] DEBUG: tmp_free_space_gb=" + tmp_free_space_gb);
+
+        boolean tmp_raid_status_ok = true;
+        boolean tmp_raid_status_found = false;
+        StringBuilder tmp_raid_detail = new StringBuilder();
+        try {
+            String tmp_os_name = System.getProperty("os.name", "unknown").toLowerCase(Locale.ENGLISH);
+            if (tmp_os_name.startsWith("linux")) {
+                FileReader tmp_fr = null;
+                BufferedReader tmp_br = null;
+                try {
+                    tmp_fr = new FileReader("/proc/mdstat");
+                    tmp_br = new BufferedReader(tmp_fr);
+                    String tmp_line = null;
+                    boolean tmp_get_raid1_ups = false;
+                    while ((tmp_line = tmp_br.readLine()) != null) {
+                        //System.out.println(tmp_line);
+                        if (tmp_line.contains(" active raid1 ")) tmp_get_raid1_ups = true;
+                        else if (tmp_get_raid1_ups) {
+                            tmp_get_raid1_ups = false;
+                            tmp_raid_status_found = true;
+                            String[] tmp_strs = tmp_line.split("\\[");
+                            String tmp_raid1_str = tmp_strs[tmp_strs.length-1].trim();
+                            if (tmp_raid1_str.length() >= 3) {
+                                if (']' == tmp_raid1_str.charAt(tmp_raid1_str.length()-1)) tmp_raid1_str = tmp_raid1_str.substring(0, tmp_raid1_str.length()-1);
+                                if (tmp_raid_detail.length() > 0) tmp_raid_detail.append(", ");
+                                tmp_raid_detail.append(tmp_raid1_str);
+                                for (int i=0; i < tmp_raid1_str.length(); i++)
+                                    if (tmp_raid1_str.charAt(i) != 'U') tmp_raid_status_ok = false;
+                                //System.out.println("[DEBUG] " + tmp_raid1_str + " status=" + tmp_raid_status_ok);
+                            }
+                        }
+                    }
+                } finally {
+                    if (null != tmp_br) {
+                        try { tmp_br.close(); } catch (Exception ignored2) {}
+                        tmp_br = null;
+                    }
+                    if (null != tmp_fr) {
+                        try { tmp_fr.close(); } catch (Exception ignored2) {}
+                        tmp_fr = null;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            tmp_raid_status_found = false;
+        }
+        String tmp_raid_detail_s = tmp_raid_detail.toString().trim();
+        Tum3Time tmp_time = new Tum3Time();
+
+        //System.out.println("[aq2j] DEBUG: tmp_raid_status_found=" + tmp_raid_status_found + " tmp_raid_status_ok=" + tmp_raid_status_ok + " tmp_raid_detail=" + tmp_raid_detail_s);
+
+        synchronized(diag_lock) {
+            diag_free_space_gb = tmp_free_space_gb;
+            diag_free_space_found = tmp_free_space_found;
+            diag_raid_status_ok = tmp_raid_status_ok;
+            diag_raid_status_found = tmp_raid_status_found;
+            diag_raid_detail = tmp_raid_detail_s;
+            diag_time = tmp_time;
+        }
+
+        diag_next_update = _curr_millis + 1000*60*(long)CONST_SRVINFO_UPD_MINS; // YYY
+    }
+
+    public String getThisServerInfo() {
+
+        int tmp_free_space_gb;
+        boolean tmp_free_space_found;
+        boolean tmp_raid_status_ok;
+        boolean tmp_raid_status_found;
+        String tmp_raid_detail;
+        Tum3Time tmp_time = new Tum3Time();
+
+        synchronized(diag_lock) {
+            tmp_free_space_gb = diag_free_space_gb;
+            tmp_free_space_found = diag_free_space_found;
+            tmp_raid_status_ok = diag_raid_status_ok;
+            tmp_raid_status_found = diag_raid_status_found;
+            tmp_raid_detail = diag_raid_detail;
+            tmp_time = diag_time;
+        }
+
+        StringBuilder tmp_info = new StringBuilder();
+        if (tmp_free_space_found) {
+            tmp_info.append("free_space=" + tmp_free_space_gb + "\r\n");
+            if (warn_free_space_gb > 0)
+                tmp_info.append("low_space_warn=" + warn_free_space_gb + "\r\n");
+        }
+        if (tmp_raid_status_found) {
+            tmp_info.append("raid_status=" + (tmp_raid_status_ok ? "ok" : "FAILED!") + "\r\n");
+            if (tmp_raid_detail.length() > 0) tmp_info.append("raid_details=" + tmp_raid_detail + "\r\n");
+        }
+        if (tmp_info.length() > 0) tmp_info.append("info_time=" + tmp_time.AsString() + "\r\n");
+        return tmp_info.toString();
+    }
+
+    public String getDiskWarningMsg() {
+
+        String tmp_msg = "";
+
+        int tmp_free_space_gb;
+        boolean tmp_free_space_found;
+        boolean tmp_raid_status_ok;
+        boolean tmp_raid_status_found;
+        String tmp_raid_detail;
+
+        synchronized(diag_lock) {
+            tmp_free_space_gb = diag_free_space_gb;
+            tmp_free_space_found = diag_free_space_found;
+            tmp_raid_status_ok = diag_raid_status_ok;
+            tmp_raid_status_found = diag_raid_status_found;
+            tmp_raid_detail = diag_raid_detail;
+        }
+        if (tmp_free_space_found && (warn_free_space_gb > 0) && (tmp_free_space_gb < warn_free_space_gb))
+            tmp_msg = "Storage space left is " + tmp_free_space_gb + " Gb only. ";
+        if (tmp_raid_status_found && !tmp_raid_status_ok)
+            tmp_msg = tmp_msg + "Storage redundancy has failed (" + tmp_raid_detail + "). ";
+        if (!tmp_msg.isEmpty()) tmp_msg = "IMPORTANT! STORAGE WARNING! " + tmp_msg;
+
+        return tmp_msg;
+    }
+
+    public String getThisServerInfoExt() {
+
+        return "conn_status=online\r\n" + "last_time=" + (new Tum3Time()).AsString() + "\r\n" + getThisServerInfo();
+
+    }
+
+    public void setOtherServerInfo(String _Info) {
+
+        OtherServerInfo = _Info;
+        OtherServer_last_time = new Tum3Time();
+        Tum3Broadcaster.DistributeFlag(this);
+
+    }
+
+    public void setOtherServerConnected(boolean _is_connected) {
+
+        OtherServerIsConnected = _is_connected;
+        //Tum3Logger.DoLog(db_name, true, "[DEBUG] OtherServerIsConnected := " + OtherServerIsConnected);
+        OtherServer_last_time = new Tum3Time();
+        Tum3Broadcaster.DistributeFlag(this);
+
+    }
+
+    private String getOtherServerInfoExt() {
+
+        String tmp_str = "conn_status=" + (OtherServerIsConnected ? "online" : "offline") + "\r\n";
+        if (null != OtherServer_last_time) tmp_str = tmp_str + "last_time=" + OtherServer_last_time.AsString() + "\r\n";
+        if (null != OtherServerInfo) tmp_str = tmp_str + OtherServerInfo;
+
+        return tmp_str;
+    }
+
+    public String getServerInfo() {
+
+        if (uplink_enabled) return
+            "[master]\r\n" + getThisServerInfoExt() +
+            "[backup]\r\n" + getOtherServerInfoExt();
+        else if (downlink_enabled) return
+            "[master]\r\n" + getOtherServerInfoExt() +
+            "[backup]\r\n" + getThisServerInfoExt();
+        else return
+            "[server]\r\n" + getThisServerInfoExt();
     }
 
     private int LastShotId_int() {

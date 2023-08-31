@@ -19,6 +19,7 @@ import aq2db.*;
 public interface SrvLinkIntf {
 
     public void AddGeneralEvent(Tum3Db origin_db, GeneralDbDistribEvent ev, String thisReceiverName, String thisEchoName);
+    public void SetFlag();
     public byte[] GetBinaryUsername();
     public String DebugTitle();
     public Tum3Db GetDb();

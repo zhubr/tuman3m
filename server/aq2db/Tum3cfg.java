@@ -39,6 +39,7 @@ public class Tum3cfg {
 
     private final static String TUM3_CFG_shutdown_timeout = "shutdown_timeout";
     private final static String TUM3_CFG_is_writeable = "is_writeable";
+    private final static String TUM3_CFG_warn_free_space_gb = "warn_free_space_gb"; // YYY
     private final static String TUM3_CFG_ugc_enabled = "ugc_enabled"; // YYY
     private final static String TUM3_CFG_ugc_uplinked = "ugc_uplinked"; // YYY
     public  final static String TUM3_CFG_hotstart_path = "hotstart_path";
@@ -53,15 +54,16 @@ public class Tum3cfg {
     public class DbCfg {
 
         private String db_name;
-        private boolean db_web_enabled, db_tcp_enabled, db_downlink_enabled, db_uplink_enabled;
+        private boolean db_web_enabled, db_tcp_enabled, db_downlink_enabled, db_uplink_enabled, db_is_writeable; // YYY
         private Properties db_props;
 
-        public DbCfg(String _db_name, boolean _web_enabled, boolean _tcp_enabled, boolean _downlink_enabled, boolean _uplink_enabled, Properties _db_props) {
+        public DbCfg(String _db_name, boolean _web_enabled, boolean _tcp_enabled, boolean _downlink_enabled, boolean _uplink_enabled, boolean _is_writeable, Properties _db_props) {
 
             db_name = _db_name;
             db_web_enabled = _web_enabled;
             db_tcp_enabled = _tcp_enabled;
             db_downlink_enabled = _downlink_enabled;
+            db_is_writeable = _is_writeable; // YYY
             db_uplink_enabled = _uplink_enabled;
             db_props = _db_props;
             //System.out.println("[DEBUG] added DbCfg: <" + _db_name + ">");
@@ -117,7 +119,17 @@ public class Tum3cfg {
                         boolean tmp_tcp_enabled = "1".equals(db_props.getProperty(TUM3_CFG_tcp_enabled, "1").trim());
                         boolean tmp_downlink_enabled = "1".equals(db_props.getProperty(TUM3_CFG_downlink_enabled, "0").trim());
                         boolean tmp_uplink_enabled = "1".equals(db_props.getProperty(TUM3_CFG_uplink_enabled, "0").trim());
-                        if (tmp_web_enabled || tmp_tcp_enabled || tmp_downlink_enabled || tmp_uplink_enabled) db_configs.add(new DbCfg(tmp_db_list[tmp_i], tmp_web_enabled, tmp_tcp_enabled, tmp_downlink_enabled, tmp_uplink_enabled, db_props));
+                        boolean tmp_is_writeable = "1".equals(db_props.getProperty(TUM3_CFG_is_writeable, config_props.getProperty(TUM3_CFG_is_writeable, "0")).trim()); // YYY
+                        if (tmp_downlink_enabled && tmp_uplink_enabled) {
+                            tmp_downlink_enabled = false; // YYY
+                            tmp_uplink_enabled = false; // YYY
+                            Tum3Logger.println("IMPORTANT: uplink and downlink specified for database <" + tmp_db_list[tmp_i] + ">, had to disable both.");
+                        }
+                        if (tmp_is_writeable && tmp_downlink_enabled) {
+                            tmp_is_writeable = false; // YYY
+                            Tum3Logger.println("Warning: disabling 'writeable' for database <" + tmp_db_list[tmp_i] + "> because it has a downlink.");
+                        }
+                        if (tmp_web_enabled || tmp_tcp_enabled || tmp_downlink_enabled || tmp_uplink_enabled) db_configs.add(new DbCfg(tmp_db_list[tmp_i], tmp_web_enabled, tmp_tcp_enabled, tmp_downlink_enabled, tmp_uplink_enabled, tmp_is_writeable, db_props));
                     }
                 } catch (Exception e) {
                     Tum3Logger.println("Warning: config not present or invalid for database <" + tmp_db_list[tmp_i] + ">: " + e);
@@ -165,6 +177,12 @@ public class Tum3cfg {
     public boolean getDbDownlinkEnabled(int _db_idx) {
 
         return db_configs.get(_db_idx).db_downlink_enabled;
+
+    }
+
+    public static boolean isWriteable(int _db_idx) {
+
+        return getGlbInstance().db_configs.get(_db_idx).db_is_writeable; // YYY
 
     }
 
@@ -245,8 +263,8 @@ public class Tum3cfg {
         return getIntValue(TUM3_CFG_shutdown_timeout, CONST_DEF_SHUTDOWN_TIMEOUT);
     }
 
-    public static boolean isWriteable(int _db_idx) {
-        return "1".equals(getParValue(_db_idx, true, TUM3_CFG_is_writeable, "0").trim());
+    public static int getWarnFreeSpaceGb(int _db_idx) { // YYY
+        return getIntValue(_db_idx, true, TUM3_CFG_warn_free_space_gb, 0);
     }
 
     public static boolean UgcEnabled(int _db_idx) {

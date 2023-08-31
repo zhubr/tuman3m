@@ -134,6 +134,7 @@ public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf,
     private long segmented_Full = 0, segmented_Ofs = 0;
     private int segmented_chunk_size = 0;
 
+    private volatile boolean NeedPushServerInfo = true; // YYY
     private volatile int RCompatVersion;
     private int RLinkKilobits, FModeratedDownloadBytes;
     private int RCompatFlags = 0;
@@ -1191,6 +1192,8 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if (tmp_ok) {
             WasAuthorized = true;
             InitDbAccess();
+//System.out.println("[DEBUG] InitDbAccess done.");
+            ConsiderPushServerInfo(thrd_ctx);
             if (null != dbLink) if (null != dbLink.GetMasterDb()) {
                 Tum3Db tmp_mdb = dbLink.GetMasterDb();
                 PrepareSecondaryLogin(tmp_mdb.getIndex(), tmp_mdb.DbName(), tmp_strings[0], tmp_strings[1]);
@@ -1199,6 +1202,14 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             LoginFailedAt = System.currentTimeMillis();
             LoginFailedState = true;
             //Owner.ShutdownSrvLink("[aq2j] Login rejected for username=" + tmp_strings[0]);
+        }
+    }
+
+    private void ConsiderPushServerInfo(byte thrd_ctx) throws Exception {
+
+        if (NeedPushServerInfo && (RCompatVersion > 428) && (null != dbLink)) {
+            NeedPushServerInfo = false; // YYY
+            PushServerFriendlyInfo(thrd_ctx, dbLink.getServerInfo()); // YYY
         }
     }
 
@@ -1428,7 +1439,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
         if (TumProtoConsts.FLEXCMD_hotstart.equals(_Action)) {
 
-            if (!Tum3cfg.isWriteable(db_index)) return Tum3Db.CONST_MSG_READONLY_NOW;
+            if (!dbLink.isWriteable || !Tum3cfg.isWriteable(db_index)) return Tum3Db.CONST_MSG_READONLY_NOW; // YYY
             if (!UserPermissions.isHotstartUploadAllowed()) return dbLink.CONST_MSG_ACCESS_DENIED;
 
             String tmp_hotstart_path = Tum3cfg.getParValue(db_index, true, Tum3cfg.TUM3_CFG_hotstart_path);
@@ -1852,7 +1863,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if (tmp_shot.GetDb() == dbLink.GetMasterDb())
             tmp_perm = MasterdbUserPermissions;
 
-        if (!Tum3cfg.isWriteable(tmp_shot.GetDb().getIndex())) {
+        if (!tmp_shot.isWriteable || !Tum3cfg.isWriteable(db_index)) { // YYY
             tmp_shot.ShotRelease();
             return tmp_err_prefix + dbLink.CONST_MSG_READONLY_NOW;
         }
@@ -1915,7 +1926,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if (tmp_shot.GetDb() == dbLink.GetMasterDb())
             tmp_perm = MasterdbUserPermissions;
 
-        if (!Tum3cfg.isWriteable(tmp_shot.GetDb().getIndex())) {
+        if (!tmp_shot.isWriteable || !Tum3cfg.isWriteable(db_index)) { // YYY
             tmp_shot.ShotRelease();
             return tmp_err_prefix + dbLink.CONST_MSG_READONLY_NOW;
         }
@@ -1981,7 +1992,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             return tmp_err_prefix + CONST_MSG_SRVLINK_ERR02;
         }
 
-        if (!Tum3cfg.isWriteable(db_index)) {
+        if (!tmp_shot.isWriteable || !Tum3cfg.isWriteable(db_index)) { // YYY
             tmp_shot.ShotRelease();
             return tmp_err_prefix + dbLink.CONST_MSG_READONLY_NOW;
         }
@@ -2049,8 +2060,42 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         //System.out.print("" + my_dbg_serial);
 
         if (null != currWritingShotHelper) currWritingShotHelper.tick();
+        ConsiderPushServerInfo(thrd_ctx); // YYY
 
         super.ClientReaderTick(thrd_ctx, outbound);
     }
 
+    protected void _NewMessageBoxCompat(byte thrd_ctx, String the_text, boolean _with_logger) throws Exception {
+
+        if (_with_logger) Tum3Logger.DoLog(getLogPrefixName(), true, the_text);
+        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
+        tmpBuff.InitSrvReply(TumProtoConsts.REQUEST_TYPE_INFORMATION_TEXT, the_text.length(), the_text.length());
+        tmpBuff.putString(the_text);
+        try {
+            PutBuff(thrd_ctx, tmpBuff, null);
+        } catch (Exception e) {
+            tmpBuff.CancelData();
+            throw e;
+        }
+    }
+
+    private void PushServerFriendlyInfo(byte thrd_ctx, String the_text) throws Exception {
+
+        //System.out.print("[DEBUG] PushServerFriendlyInfo()");
+        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
+        tmpBuff.InitSrvReply(TumProtoConsts.REQUEST_TYPE_SERVERINFO, the_text.length(), the_text.length());
+        tmpBuff.putString(the_text);
+        try {
+            PutBuff(thrd_ctx, tmpBuff, null);
+        } catch (Exception e) {
+            tmpBuff.CancelData();
+            throw e;
+        }
+    }
+
+    public void SetFlag() {
+
+        NeedPushServerInfo = true;
+
+    }
 }

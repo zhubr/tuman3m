@@ -129,6 +129,18 @@ public final class Tum3Broadcaster {
         }
     }
 
+    public final static void DistributeFlag(Tum3Db origin_db) { // YYY
+
+        synchronized(clientList) { 
+            // Reminder. This loop is supposed to complete quickly, no delays inside!
+            for (SrvLinkIntf thisClient: clientList) 
+                if (thisClient.GetDb() == origin_db) {
+                    thisClient.SetFlag();
+                    //System.out.println("[aq2j] DEBUG: DistributeFlag() processed " + thisClient.DebugTitle());
+                }
+        }
+    }
+
     public final static ByteBuffer GetUserList(Tum3Db relevant_db, boolean _with_aux) {
 
         int tmp_expected_length; // YYY

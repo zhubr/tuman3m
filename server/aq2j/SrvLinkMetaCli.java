@@ -100,7 +100,7 @@ public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkO
                     WasAuthorized = true;
                     AuthorizedLogin = tmp_login;
                     InitDbAccess();
-                    BroadcastUsrList(jo.getString(JSON_NAME_userlist)); // YYY
+                    dbLink.setOtherServerConnected(true); // YYY
                     ForceSendUserList(thrd_ctx, ctx); // YYY
                     UplinkManager.setUplink(getDbIndex(), this); // YYY
             } else {

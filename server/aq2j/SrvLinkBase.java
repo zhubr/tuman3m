@@ -658,8 +658,8 @@ public abstract class SrvLinkBase {
 
         if (TalkMsgQueueOverflow) {
             TalkMsgQueueOverflow = false;
-            _NewMessageBoxCompat(thrd_ctx, "Internal error: TalkMsgQueue overflow. CONST_MAX_TALK_OUT_QUEUE needs to be increased.", true);
-            //Tum3Logger.DoLog(db_name, true, "TalkMsgQueue overflow (CONST_MAX_TALK_OUT_QUEUE needs to be increased) in session " + DebugTitle());
+            _NewMessageBoxCompat(thrd_ctx, "Internal error: TalkMsgQueue overflow (CONST_MAX_TALK_OUT_QUEUE needs to be increased) in session " + DebugTitle(), true);
+            //Tum3Logger.DoLog(db_name, true, "Internal error: TalkMsgQueue overflow (CONST_MAX_TALK_OUT_QUEUE needs to be increased) in session " + DebugTitle());
         }
 
         NeedToRequestKeepalive(System.currentTimeMillis(), true);
@@ -668,16 +668,8 @@ public abstract class SrvLinkBase {
 
     protected void _NewMessageBoxCompat(byte thrd_ctx, String the_text, boolean _with_logger) throws Exception {
 
-        if (_with_logger) Tum3Logger.DoLog(getLogPrefixName(), true, the_text);
-        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
-        tmpBuff.InitSrvReply(TumProtoConsts.REQUEST_TYPE_INFORMATION_TEXT, the_text.length(), the_text.length());
-        tmpBuff.putString(the_text);
-        try {
-            PutBuff(thrd_ctx, tmpBuff, null);
-        } catch (Exception e) {
-            tmpBuff.CancelData();
-            throw e;
-        }
+        Tum3Logger.DoLog(getLogPrefixName(), true, the_text);
+
     }
 
     private boolean NeedToSendTalkMsg() {
@@ -736,4 +728,6 @@ public abstract class SrvLinkBase {
 
     }
 
+    public void SetFlag() {
+    }
 }

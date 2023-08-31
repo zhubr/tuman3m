@@ -37,6 +37,7 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
     protected final static String JSON_NAME_shot = "shot";
     protected final static String JSON_NAME_glb_fwd_id = "glb_fwd_id";
     protected final static String JSON_NAME_err_msg = "err_msg";
+    protected final static String JSON_NAME_server_info = "server_info";
 
     protected final static String JSON_FUNC_hello = "hello";
     protected final static String JSON_FUNC_welcome = "welcome";
@@ -146,7 +147,8 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
 
         if (super.CancelLinkIntrnl()) return true;
 
-        Tum3Broadcaster.intercon_users(dbLink, this, null); // YYY
+        Tum3Broadcaster.intercon_users(dbLink, this, null);
+        dbLink.setOtherServerConnected(false); // YYY
 
         //flushWritingShot();
 
@@ -276,6 +278,7 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
         JSONObject jo2 = new JSONObject();
         jo2.put(JSON_NAME_function, JSON_FUNC_users);
         FillUserList(jo2); // YYY
+        jo2.put(JSON_NAME_server_info, dbLink.getThisServerInfo()); // YYY
         Send_JSON(thrd_ctx, ctx, jo2);
 
     }
@@ -284,8 +287,18 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
 
         String tmp_json_str = Tum3Util.BytesToStringRaw(req_body, 0, req_trailing_len);
         //JSONObject jo = new JSONObject(tmp_json_str);
-        onJSON(thrd_ctx, ctx, new JSONObject(tmp_json_str));
+        onJSON_Intrnl(thrd_ctx, ctx, new JSONObject(tmp_json_str));
 
+    }
+
+    private void onJSON_Intrnl(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
+
+        onJSON(thrd_ctx, ctx, jo);
+
+        if (WasAuthorized) {
+            if (jo.has(JSON_NAME_server_info)) dbLink.setOtherServerInfo(jo.getString(JSON_NAME_server_info)); // YYY
+            if (jo.has(JSON_NAME_userlist)) BroadcastUsrList(jo.getString(JSON_NAME_userlist));
+        }
     }
 
     protected void onJSON(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
@@ -298,11 +311,6 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
 
                 Tum3Broadcaster.DistributeGeneralEvent(dbLink, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_TALK, tmp_body), this, tmp_receiver, null);
             }
-            return;
-        }
-        if (JSON_FUNC_users.equals(jo.getString(JSON_NAME_function))) {
-            if (WasAuthorized)
-                BroadcastUsrList(jo.getString(JSON_NAME_userlist));
             return;
         }
 
