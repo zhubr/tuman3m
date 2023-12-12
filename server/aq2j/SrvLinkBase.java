@@ -22,7 +22,7 @@ import aq2net.*;
 import aq3host.*;
 
 
-public abstract class SrvLinkBase {
+public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
 
 
     private final static int CONST_TRAILING_BYTES_LIMIT = 1024*1024*256; // XXX TODO!!! Make this configurable?
@@ -74,9 +74,56 @@ public abstract class SrvLinkBase {
     protected volatile int hanging_out_trace_bytes=0, hanging_out_trace_number=0; // Should better be private?
     protected volatile boolean keepalive_sent_inline = false; // Should better be private?
 
+    protected final int db_index; // YYY Moved here from descendants.
+    protected final TunedSrvLinkPars tuned_pars; // YYY
 
-    public SrvLinkBase(SrvLinkOwner thisOwner) {
 
+    public abstract static class TunedSrvLinkPars {
+
+        protected String LINK_PARS_LABEL = ""; // YYY
+
+        protected String TUM3_CFG_idle_check_alive_delay;
+        protected String TUM3_CFG_max_out_buff_count;
+        protected String TUM3_CFG_min_out_buff_kbytes;
+
+        protected int CONST_OUT_BUFF_COUNT_MAX_default;
+        protected int CONST_KEEPALIVE_INTERVAL_SEC_default;
+        protected int CONST_MIN_OUT_BUFF_default;  // kbytes.
+
+        protected final int CONST_MIN_OUT_BUFF[];
+        protected final int CONST_OUT_BUFF_COUNT_MAX[];
+        protected final int CONST_KEEPALIVE_INTERVAL_SEC[];
+
+        public abstract void AssignStaticValues(); // YYY
+
+        protected TunedSrvLinkPars() {
+
+            AssignStaticValues();
+
+            Tum3cfg cfg = Tum3cfg.getGlbInstance();
+            int tmp_db_count = cfg.getDbCount();
+
+            CONST_MIN_OUT_BUFF = new int[tmp_db_count];
+            CONST_OUT_BUFF_COUNT_MAX = new int[tmp_db_count];
+            CONST_KEEPALIVE_INTERVAL_SEC = new int[tmp_db_count];
+
+            for (int tmp_i = 0; tmp_i < tmp_db_count; tmp_i++) {
+                String db_name = cfg.getDbName(tmp_i);
+                CONST_MIN_OUT_BUFF[tmp_i] = 1024*Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_min_out_buff_kbytes, CONST_MIN_OUT_BUFF_default);
+                CONST_OUT_BUFF_COUNT_MAX[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_max_out_buff_count, CONST_OUT_BUFF_COUNT_MAX_default);
+                CONST_KEEPALIVE_INTERVAL_SEC[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_idle_check_alive_delay, CONST_KEEPALIVE_INTERVAL_SEC_default);
+
+                Tum3Logger.DoLog(db_name, false, "DEBUG: " + LINK_PARS_LABEL + " CONST_MIN_OUT_BUFF=" + CONST_MIN_OUT_BUFF[tmp_i]);
+                Tum3Logger.DoLog(db_name, false, "DEBUG: " + LINK_PARS_LABEL + " CONST_OUT_BUFF_COUNT_MAX=" + CONST_OUT_BUFF_COUNT_MAX[tmp_i]);
+                Tum3Logger.DoLog(db_name, false, "DEBUG: " + LINK_PARS_LABEL + " CONST_KEEPALIVE_INTERVAL_SEC=" + CONST_KEEPALIVE_INTERVAL_SEC[tmp_i]);
+            }
+        }
+    }
+
+    public SrvLinkBase(int _db_idx, TunedSrvLinkPars _tuned_pars, SrvLinkOwner thisOwner) {
+
+        db_index = _db_idx; // YYY
+        tuned_pars = _tuned_pars; // YYY
         Owner = thisOwner;
         SupportOOB = thisOwner.SupportOOB();
         synchronized(OutBuffEmptyLock) {
@@ -107,13 +154,26 @@ public abstract class SrvLinkBase {
 
     protected abstract boolean getWasAuthorized();
 
-    protected abstract int getKeepaliveTimeoutVal();
+    private int getKeepaliveTimeoutVal() {
 
-    protected abstract int getOutBuffCountMax();
+        return tuned_pars.CONST_KEEPALIVE_INTERVAL_SEC[db_index]; // YYY
+
+    }
+
+    private int getOutBuffCountMax() {
+
+        return tuned_pars.CONST_OUT_BUFF_COUNT_MAX[db_index];
+
+    }
 
     protected abstract boolean NoPauseOut();
 
-    protected abstract OutgoingBuff newOutgoingBuff();
+    private OutgoingBuff newOutgoingBuff() {
+
+        return new OutgoingBuff(tuned_pars.CONST_MIN_OUT_BUFF[db_index]); // YYY
+
+    }
+
 
 
     public void SendOOBToServer(String buf) throws Exception {
@@ -673,7 +733,8 @@ public abstract class SrvLinkBase {
     }
 
     private boolean NeedToSendTalkMsg() {
-        synchronized(TalkMsgQueue) { return (TalkMsgQueueFill > 0); }
+        if (null == TalkMsgQueue) return false; // YYY
+        else synchronized(TalkMsgQueue) { return (TalkMsgQueueFill > 0); }
     }
 
     protected boolean isCancellingLink() {
@@ -712,6 +773,7 @@ public abstract class SrvLinkBase {
 
         tmp_need_resume = false;
         int tmp_msg_count = 0;
+        if (null == TalkMsgQueue) return tmp_need_resume; // YYY
         synchronized(TalkMsgQueue) { tmp_msg_count = TalkMsgQueueFill; }
         do {
             if (tmp_msg_count <= 0) return tmp_need_resume;

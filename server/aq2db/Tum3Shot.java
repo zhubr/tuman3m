@@ -1480,11 +1480,12 @@ public class Tum3Shot {
 
         if (_ThisID == 0) return "illegal signal id specified";
         if (!Valid) return "data directory seems invalid";
-        if (!isWriteable) return Tum3Db.CONST_MSG_READONLY_NOW; // YYY
+        if (!isWriteable) return Tum3Db.CONST_MSG_READONLY_NOW;
 
-        if (_upd_arr.length > CONST_DENSITY_FSIZE_LIMIT) return "data size seems way too big"; // YYY
+        if (_upd_arr.length > CONST_DENSITY_FSIZE_LIMIT) return "data size seems way too big";
 
-        boolean tmp_as_volatile = true;
+        boolean tmp_as_volatile = (shotPathVol.length() > 0); // YYY
+        boolean tmp_nonvol_present, tmp_vol_present;
         byte tmp_in_progress = 8;
         synchronized(CacheIds) {
             //if (2 == 2) return "Artifical error in density update.";
@@ -1493,10 +1494,8 @@ public class Tum3Shot {
             byte tmp_cache_val = CacheIds.get(_ThisID);
             if ((tmp_cache_val & 3) == 0)
                 return "Cache record is empty for the required density update.";
-            if ((tmp_cache_val & 1) != 0) tmp_as_volatile = false;
-            if ((tmp_cache_val & 2) != 0) tmp_as_volatile = true;
-
-            if (!tmp_as_volatile && (shotPathVol.length() > 0)) return "Updating of non-volatile data is not possible."; // YYY
+            tmp_nonvol_present = (tmp_cache_val & 1) != 0; // YYY
+            tmp_vol_present = (tmp_cache_val & 2) != 0; // YYY
 
             if (tmp_as_volatile) tmp_in_progress = 8;
             else  tmp_in_progress = 4;
@@ -1509,7 +1508,7 @@ public class Tum3Shot {
         UtilCreateFile1 tmpFF = null;
         RandomAccessFile tmp_f_src = null, tmp_f_dst = null;
         boolean tmp_writing_started = false;
-        boolean SyncStatusVolOpBegin_ok = false; // YYY
+        boolean SyncStatusVolOpBegin_ok = false;
 
         String tmpActualPath = shotPathMain;
 
@@ -1518,42 +1517,45 @@ public class Tum3Shot {
             //System.out.println("[aq2j] DEBUG: UpdateDensityData(): using volatile for '" + shotName + "' id=" + _ThisID);
         }
 
-        boolean tmp_need_sync_end = false; // YYY
+        boolean tmp_need_sync_end = false;
         try {
             String tmp_bup_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_BUP_DENSITY;
             String tmp_std_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_NORMAL;
-            String tmp_tmp_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_TMPFILE; // YYY
+            String tmp_nonvol_fname = shotPathMain + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_NORMAL; // YYY
+            String tmp_tmp_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_TMPFILE;
             boolean tmp_bup_ok = false;
 
             // Check for editlocked tag.
             UtilCreateFile1 tmpCheckLocked = null;
             TraceMetaData tmpMeta = null;
-            try {
-                tmpCheckLocked = new UtilCreateFile1(DbName(), tmp_std_fname, false);
-                tmpCheckLocked.readHeaders(shotName, _ThisID);
-                if ((!tmpCheckLocked.hdr_is_v1 && (tmpCheckLocked.tmpFiledHSize > (ofs_HMetaDataSize_old+4)))
-                 ||  (tmpCheckLocked.hdr_is_v1 && (tmpCheckLocked.tmpFiledHSize > (ofs_HMetaDataSize_new+8)))
-                ) {
-                    int tmp_metasz_ofs = ofs_HMetaDataSize_old; // old .HMetaDataSize
-                    if (tmpCheckLocked.hdr_is_v1) tmp_metasz_ofs = ofs_HMetaDataSize_new; // new .HMetaDataSize
-                    tmpCheckLocked.raf.seek(4 + tmpCheckLocked.tmpNewHeaderSizeInFile + tmp_metasz_ofs); // YYY
-                    int tmpHMetaDataSize = tmpCheckLocked.raf.readInt();
-                    if (tmpCheckLocked.hdr_is_v1) tmpCheckLocked.raf.readInt(); // YYY
-                    int tmpMetaLimit;
-                    if (!tmpCheckLocked.hdr_is_v1)
-                        tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - ofs_HMetaDataSize_old - 4;
-                    else
-                        tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - ofs_HMetaDataSize_new - 8; // YYY
-                    if (tmpHMetaDataSize > tmpMetaLimit) tmpHMetaDataSize = tmpMetaLimit;
-                    byte[] tmpMetaAsBytes = new byte[tmpHMetaDataSize];
-                    tmpCheckLocked.raf.readFully(tmpMetaAsBytes); // YYY
-                    tmpMeta = new TraceMetaData(tmpMetaAsBytes);
+
+            if (tmp_vol_present || (new File(tmp_std_fname).exists())) // YYY
+                try {
+                    tmpCheckLocked = new UtilCreateFile1(DbName(), tmp_std_fname, false);
+                    tmpCheckLocked.readHeaders(shotName, _ThisID);
+                    if ((!tmpCheckLocked.hdr_is_v1 && (tmpCheckLocked.tmpFiledHSize > (ofs_HMetaDataSize_old+4)))
+                     ||  (tmpCheckLocked.hdr_is_v1 && (tmpCheckLocked.tmpFiledHSize > (ofs_HMetaDataSize_new+8)))
+                    ) {
+                        int tmp_metasz_ofs = ofs_HMetaDataSize_old; // old .HMetaDataSize
+                        if (tmpCheckLocked.hdr_is_v1) tmp_metasz_ofs = ofs_HMetaDataSize_new; // new .HMetaDataSize
+                        tmpCheckLocked.raf.seek(4 + tmpCheckLocked.tmpNewHeaderSizeInFile + tmp_metasz_ofs);
+                        int tmpHMetaDataSize = tmpCheckLocked.raf.readInt();
+                        if (tmpCheckLocked.hdr_is_v1) tmpCheckLocked.raf.readInt();
+                        int tmpMetaLimit;
+                        if (!tmpCheckLocked.hdr_is_v1)
+                            tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - ofs_HMetaDataSize_old - 4;
+                        else
+                            tmpMetaLimit = tmpCheckLocked.tmpFiledHSize - ofs_HMetaDataSize_new - 8;
+                        if (tmpHMetaDataSize > tmpMetaLimit) tmpHMetaDataSize = tmpMetaLimit;
+                        byte[] tmpMetaAsBytes = new byte[tmpHMetaDataSize];
+                        tmpCheckLocked.raf.readFully(tmpMetaAsBytes);
+                        tmpMeta = new TraceMetaData(tmpMetaAsBytes);
+                    }
+                } finally {
+                    if (tmpCheckLocked != null) {
+                        tmpCheckLocked.close();
+                    }
                 }
-            } finally {
-                if (tmpCheckLocked != null) {
-                    tmpCheckLocked.close();
-                }
-            }
 
             if (tmpMeta != null) if (tmpMeta.containsKey(TumProtoConsts.tag_editlocked)) {
                 String tmp_editlocked = tmpMeta.get(TumProtoConsts.tag_editlocked);
@@ -1562,14 +1564,28 @@ public class Tum3Shot {
             }
 
             if (tmp_as_volatile) {
-                tmp_need_sync_end = true; // YYY
-                SyncStatusVolOpBegin(_ThisID); // YYY
-                SyncStatusVolOpBegin_ok = true; // YYY
+                tmp_need_sync_end = true;
+                SyncStatusVolOpBegin(_ThisID);
+                SyncStatusVolOpBegin_ok = true;
             }
 
-            if (!new File(tmp_bup_fname).exists()) {
+            if (
+                 ((!tmp_nonvol_present || !tmp_as_volatile) && !(new File(tmp_bup_fname).exists())) // YYY
+                   ||
+                 (tmp_as_volatile && !tmp_vol_present) // YYY
+               ) {
+                String tmp_fname_from = tmp_std_fname;
+                String tmp_fname_to = tmp_bup_fname;
+                if (tmp_as_volatile && !tmp_vol_present) {
+                    tmp_fname_from = tmp_nonvol_fname;  // YYY
+                    tmp_fname_to = tmp_std_fname; // YYY
 
-                tmp_f_src = new RandomAccessFile(tmp_std_fname, "r");
+                    File tmp_monthdir = new File(shotPathVol + shotSubdir);
+                    File tmp_shotdir = new File(shotPathVol + shotSubdir + File.separator + shotName);
+                    if (!tmp_monthdir.exists()) try { tmp_monthdir.mkdir(); } catch (Exception ignored) {} else tmp_monthdir = null; // YYY
+                    if (!tmp_shotdir.exists()) try { tmp_shotdir.mkdir(); } catch (Exception ignored) {} else tmp_shotdir = null; // YYY
+                }
+                tmp_f_src = new RandomAccessFile(tmp_fname_from, "r");
                 long tmp_fsize_l = tmp_f_src.length();
                 if (tmp_fsize_l > CONST_DENSITY_FSIZE_LIMIT) throw new Exception("Original file size is too big for backup.");
                 int tmp_fsize = (int)tmp_fsize_l;
@@ -1577,21 +1593,24 @@ public class Tum3Shot {
                 tmp_f_src.readFully(tmp_copy_buff);
                 tmp_f_src.close();
                 tmp_f_src = null;
-                tmp_f_dst = new RandomAccessFile(tmp_tmp_fname /* tmp_bup_fname */, "rw"); // YYY
+                tmp_f_dst = new RandomAccessFile(tmp_tmp_fname, "rw");
                 tmp_f_dst.write(tmp_copy_buff);
                 tmp_f_dst.setLength(tmp_fsize);
                 tmp_f_dst.close();
                 tmp_f_dst = null;
 
-                if (!new File(tmp_tmp_fname).renameTo(new File(tmp_bup_fname))) { // YYY
-                    throw new Exception("Temporary new file <" + tmp_tmp_fname + "> could not be renamed into <" + tmp_bup_fname + ">"); // YYY
+                if (!new File(tmp_tmp_fname).renameTo(new File(tmp_fname_to))) {
+                    throw new Exception("Temporary new file <" + tmp_tmp_fname + "> could not be renamed into <" + tmp_fname_to + ">");
                     //Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
                 }
+                if (tmp_as_volatile && !tmp_vol_present) tmp_vol_present = true; // YYY
             }
 
-            if (new File(tmp_bup_fname).exists()) {
+            String tmp_read_check_name = tmp_bup_fname;
+            if (tmp_as_volatile && tmp_nonvol_present) tmp_read_check_name = tmp_nonvol_fname; // YYY
+            if (new File(tmp_read_check_name).exists()) {
 
-                tmpFF = new UtilCreateFile1(DbName(), tmp_bup_fname, false);
+                tmpFF = new UtilCreateFile1(DbName(), tmp_read_check_name, false);
                 tmpFF.readHeaders(shotName, _ThisID);
                 if ((tmpFF.tmpFiledHSize > 0) && (tmpFF.tmpBuffSize > 0) && (tmpFF.tmpBuffSize < CONST_DENSITY_FSIZE_LIMIT)) {
                     tmpFF.raf.seek(4 + tmpFF.tmpNewHeaderSizeInFile);
@@ -1640,7 +1659,7 @@ public class Tum3Shot {
 
             } else {
 
-                tmp_result = "There is some problem with backup file"; // XXX TODO. Make the message more specific.
+                tmp_result = "There is some problem with backup/original file"; // XXX TODO. Make the message more specific.
 
             }
 
@@ -1665,6 +1684,7 @@ public class Tum3Shot {
             byte tmp_cache_val = 0;
             if (CacheIds.containsKey(_ThisID)) tmp_cache_val = CacheIds.get(_ThisID);
             tmp_cache_val &= ~tmp_in_progress;
+            if (tmp_vol_present) tmp_cache_val |= 2; // YYY
             if (0 == tmp_cache_val) CacheIds.remove(_ThisID);
             else CacheIds.put(_ThisID, tmp_cache_val);
             CacheIds.put(_ThisID, tmp_cache_val);
@@ -1715,7 +1735,16 @@ public class Tum3Shot {
             //System.out.println("[DEBUG] id=" + thisSignalId + " suspended delivery.");
             return new ImmediateArrayContinuator(null, 0, true);
         }
-
+        if (tmp_with_warning) {
+            try {
+                Tum3SignalList tmpSignalList = Tum3SignalList.GetSignalList(); // YYY
+                int tmp_index = tmpSignalList.FindIndex(thisSignalId);
+                if ((tmp_index >= 1) && (tmp_index <= tmpSignalList.SignalCount())) {
+                    NameValueList tmp_entry = tmpSignalList.GetSignalEntry(tmp_index);
+                    if ("1".equals(tmp_entry.GetValueFor(Tum3SignalList.const_signal_is_density, ""))) tmp_with_warning = false; // YYY
+                }
+            } catch (Exception ignored) {}
+        }
         return GetByPositionNew(thisSignalId, _use_trailing_status, tmp_as_volatile, tmp_with_warning);
     }
 

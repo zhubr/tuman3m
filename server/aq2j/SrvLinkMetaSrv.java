@@ -54,7 +54,7 @@ public class SrvLinkMetaSrv extends SrvLinkMeta {
 
     }
 
-    private static volatile SrvLinkMetaSrv curr_instance[] = new SrvLinkMetaSrv[Tum3cfg.getGlbInstance().getDbCount()]; // YYY
+    private static volatile SrvLinkIntercon curr_instance[] = new SrvLinkIntercon[Tum3cfg.getGlbInstance().getDbCount()]; // YYY
     private final Object perms_lock = new Object();
     private volatile long perms_millis = 0;
     private volatile boolean perms_loaded = false, perms_loading = false;
@@ -65,13 +65,19 @@ public class SrvLinkMetaSrv extends SrvLinkMeta {
         super(_db_idx, thisOwner);
     }
 
-    private static synchronized boolean setCurrent(int _db_index, SrvLinkMetaSrv instance) {
+    private final static synchronized boolean setCurrent_intrn(int _db_index, SrvLinkIntercon instance) {
 
         if (null == curr_instance[_db_index]) {
             curr_instance[_db_index] = instance;
             return true;
         }
         return false;
+
+    }
+
+    protected boolean setCurrent(int _db_index, SrvLinkIntercon instance) {
+
+        return setCurrent_intrn(_db_index, instance);
 
     }
 
@@ -96,37 +102,7 @@ public class SrvLinkMetaSrv extends SrvLinkMeta {
         String tmp_func = jo.getString(JSON_NAME_function);
 
         if (JSON_FUNC_hello.equals(tmp_func)) {
-            String tmp_db = jo.getString(JSON_NAME_db);
-            String tmp_login = jo.getString(JSON_NAME_username);
-            String tmp_password = jo.getString(JSON_NAME_password);
-            //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] intercon login with <" + tmp_db + "," + tmp_login + "," + tmp_password + ">");
-            if (getLogPrefixName().equals(tmp_db) && get_transp_user().equals(tmp_login))
-                if (Tum3Perms.CheckMetaPwdIsCorrect(getDbIndex(), tmp_db, tmp_login, tmp_password)) // YYY
-                    if (setCurrent(getDbIndex(), this)) { // YYY
-                        Tum3Logger.DoLog(getLogPrefixName(), false, "Intercon auth success.");
-                        WasAuthorized = true;
-                        AuthorizedLogin = tmp_login;
-                        InitDbAccess();
-                        dbLink.setOtherServerConnected(true); // YYY
-                        //dbLink = Tum3Db.getDbInstance(getDbIndex());
-                        //Tum3Broadcaster.addclient(dbLink, this);
-
-                        JSONObject jo2 = new JSONObject();
-                        jo2.put(JSON_NAME_function, JSON_FUNC_welcome);
-                        jo2.put(JSON_NAME_db, getLogPrefixName());
-                        jo2.put(JSON_NAME_username, tmp_login);
-                        FillUserList(jo2); // YYY
-                        jo2.put(JSON_NAME_server_info, dbLink.getThisServerInfo()); // YYY
-                        Send_JSON(thrd_ctx, ctx, jo2);
-                    } else {
-                        Tum3Logger.DoLog(getLogPrefixName(), true, "Warning: duplicate intercon auth attempted."); // YYY
-                    }
-            if (!WasAuthorized) {
-                Tum3Logger.DoLog(getLogPrefixName(), true, "Intercon auth failed.");
-                LoginFailedAt = System.currentTimeMillis();
-                LoginFailedState = true;
-                ShutdownSrvLink("Authorization rejected");
-            }
+            FinishJsonLoginReq(thrd_ctx, ctx, jo);
             return;
         }
         if (JSON_FUNC_ugcfwd.equals(tmp_func) && WasAuthorized) {

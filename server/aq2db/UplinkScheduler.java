@@ -21,7 +21,7 @@ public class UplinkScheduler extends Thread
     private static final int QUICK_FAILS_LIMIT = 3; // XXX Make it configurable eventually?
     private static final int WAKEUP_PERIOD = 5000; // XXX Make it configurable eventually?
 
-    private String db_name;
+    private String db_name, the_label;
     private InterconInitiator initiator;
     private boolean is_connected = false;
     private int fail_count = 0, short_conns_count = 0;
@@ -29,10 +29,11 @@ public class UplinkScheduler extends Thread
     //private long discon_millis[] = new long[QUICK_FAILS_LIMIT];
 
 
-    public UplinkScheduler(InterconInitiator _initiator, Tum3Db _db_link) {
+    public UplinkScheduler(InterconInitiator _initiator, Tum3Db _db_link, String _label) {
         //_initiator.ConnectToServer();
 
         db_name = _db_link.DbName();
+        the_label = _label; // YYY
         initiator = _initiator;
         setDaemon(true);
 
@@ -59,20 +60,20 @@ public class UplinkScheduler extends Thread
     private void TryConnect() {
 
         try {
-          Tum3Logger.DoLog(db_name, false, "Connecting to uplink server...");
+          Tum3Logger.DoLog(db_name, false, "Connecting to uplink (" + the_label + ") server...");
           if (initiator.ConnectToServer()) {
-              Tum3Logger.DoLog(db_name, false, "Connected to uplink server.");
+              Tum3Logger.DoLog(db_name, false, "Connected to uplink (" + the_label + ") server.");
               last_millis = System.currentTimeMillis();
               last_connected = last_millis;
               setConnected(true);
           } else {
-              Tum3Logger.DoLog(db_name, false, "Connect to uplink server failed with: " + initiator.getDisconnReason());
+              Tum3Logger.DoLog(db_name, false, "Connect to uplink (" + the_label + ") server failed with: " + initiator.getDisconnReason());
               if (fail_count <= QUICK_FAILS_LIMIT) fail_count++;
               last_millis = System.currentTimeMillis();
               setConnected(false);
           }
         } catch (Exception e) {
-              Tum3Logger.DoLog(db_name, false, "Connect to uplink server raised exception: " + e.toString());
+              Tum3Logger.DoLog(db_name, false, "Connect to uplink (" + the_label + ") server raised exception: " + e.toString());
               if (fail_count <= QUICK_FAILS_LIMIT) fail_count++;
               last_millis = System.currentTimeMillis();
               setConnected(false);

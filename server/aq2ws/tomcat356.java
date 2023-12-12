@@ -51,6 +51,7 @@ public class tomcat356 extends GenericServlet implements ServerApplicationConfig
 
     private static final String CONST_TUM3_DBURL_PARAM = "dburl-";
     private static final String CONST_TUM3_INTR_META_PARAM = "intercon_meta-";
+    private static final String CONST_TUM3_INTR_BULK_PARAM = "intercon_bulk-";
     private static final String CONST_TUM3_ENABLE_TCP_PARAM = "enabletcp";
     private static final String CONST_INTERNAL_PAR_PASSING = "http_headers";
     private static final String CONST_INTERNAL_SESS_PRODUCER = "session_producer";
@@ -420,6 +421,72 @@ public class tomcat356 extends GenericServlet implements ServerApplicationConfig
         //System.out.println("[DEBUG] -lifecycleEvent: <" + event.getType() + ">");
     }
 
+    private static abstract class TempUplinkCreator {
+
+        protected abstract String _label();
+
+        public abstract SessionProducerWeb CreateProducer(int _i, String _username, String _password, String _serv_addr);
+
+        public abstract void RegisterInitiator(int _i, InterconInitiator _initiator);
+
+        public void DoCreate(int tmp_i, String tmp_db_name, String _serv_addr_param) {
+            try {
+              String tmp_serv_addr = Tum3cfg.getParValue(tmp_i, false, _serv_addr_param);
+              String tmp_trusted_keys = Tum3cfg.getParValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_trusted_keys); //  "/opt/aq2j/tum3trust.jks"
+              String tmp_cred_filename = Tum3cfg.getParValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_credentials); //  "/opt/tum3/cred_main.properties"
+              int tmp_connect_timeout = Tum3cfg.getIntValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_connect_timeout, WsInterconInitiator.CONST_WS_UPLINK_CONN_TIMEOUT_def); // 3000
+
+              if (!tmp_serv_addr.isEmpty() && !tmp_trusted_keys.isEmpty() && !tmp_cred_filename.isEmpty()) {
+                  Properties tmp_props = new Properties();
+                  tmp_props.load(new FileInputStream(tmp_cred_filename));
+                  String tmp_username = tmp_props.getProperty(Tum3cfg.TUM3_CFG_uplink_username, "").trim();
+                  String tmp_password = tmp_props.getProperty(Tum3cfg.TUM3_CFG_uplink_password, "").trim();
+
+                  InterconInitiator tmp_initiator = new WsInterconInitiator(
+                      tmp_serv_addr, tmp_trusted_keys,
+                      tmp_username, tmp_password,
+                      tmp_connect_timeout,
+                      CreateProducer(tmp_i, tmp_username, tmp_password, tmp_serv_addr)
+                  );
+                  RegisterInitiator(tmp_i, tmp_initiator);
+                  Tum3Logger.DoLog(tmp_db_name, true, "Info: creating " + _label() + " uplink caller for " + tmp_serv_addr);
+              } else {
+                  Tum3Logger.DoLog(tmp_db_name, true, "Warning: " + _label() + " uplink configuration looks incomplete, skipping.");
+              }
+            } catch (Exception e) {
+                  Tum3Logger.DoLog(tmp_db_name, true, "IMPORTANT: failed to create WS " + _label() + " uplink endpoint, error: " + e.toString());
+            }
+        }
+    }
+
+    private static class TempUplinkCreatorMetaCli extends TempUplinkCreator {
+
+        protected String _label() { return "meta"; }
+
+        public SessionProducerWeb CreateProducer(int _i, String _username, String _password, String _serv_addr) {
+            return new SessionProducerWebMetaUpl(_i, _username, _password, _serv_addr);
+        }
+
+        public void RegisterInitiator(int _i, InterconInitiator _initiator) {
+            Tum3Db.getDbInstance(_i).setUplink(_initiator);
+        }
+
+    }
+
+    private static class TempUplinkCreatorBulkCli extends TempUplinkCreator {
+
+        protected String _label() { return "bulk"; }
+
+        public SessionProducerWeb CreateProducer(int _i, String _username, String _password, String _serv_addr) {
+            return new SessionProducerWebBulkCli(_i, _username, _password, _serv_addr);
+        }
+
+        public void RegisterInitiator(int _i, InterconInitiator _initiator) {
+            Tum3Db.getDbInstance(_i).setUpBulk(_initiator);
+        }
+
+    }
+
     public void init(ServletConfig config) throws ServletException {
         super.init(config);
 
@@ -471,7 +538,7 @@ public class tomcat356 extends GenericServlet implements ServerApplicationConfig
                         String tmp_url = getInitParameter(CONST_TUM3_INTR_META_PARAM + tmp_db_name);
                         if (null == tmp_url) tmp_url = "";
                         if (!tmp_url.isEmpty()) {
-                            //System.out.println("[DEBUG] tmp_db_name=<" + tmp_db_name + ">, tmp_url=<" + tmp_url + ">");
+                            //System.out.println("[DEBUG] meta tmp_db_name=<" + tmp_db_name + ">, tmp_url=<" + tmp_url + ">");
                             try {
                                 ServerEndpointConfig.Builder tmpBuilder = ServerEndpointConfig.Builder.create(Aq2WsEndpointServer.class, tmp_url);
                                 tmpBuilder.configurator(new CustomServerConfigurator(new SessionProducerWebMeta(tmp_i)));
@@ -482,34 +549,25 @@ public class tomcat356 extends GenericServlet implements ServerApplicationConfig
                             }
                         }
                     }
-                    if (glb_cfg.getDbUplinkEnabled(tmp_i)) {
-                      try {
-                        String tmp_serv_addr = Tum3cfg.getParValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_serv_addr); //  "194.85.224.69/dbtsk/wsconn"
-                        String tmp_trusted_keys = Tum3cfg.getParValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_trusted_keys); //  "/opt/aq2j/tum3trust.jks"
-                        String tmp_cred_filename = Tum3cfg.getParValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_credentials); //  "/opt/tum3/cred_main.properties"
-                        int tmp_connect_timeout = Tum3cfg.getIntValue(tmp_i, false, Tum3cfg.TUM3_CFG_uplink_connect_timeout, WsInterconInitiator.CONST_WS_UPLINK_CONN_TIMEOUT_def); // 3000
-
-                        if (!tmp_serv_addr.isEmpty() && !tmp_trusted_keys.isEmpty() && !tmp_cred_filename.isEmpty()) {
-                            Properties tmp_props = new Properties();
-                            tmp_props.load(new FileInputStream(tmp_cred_filename));
-                            String tmp_username = tmp_props.getProperty(Tum3cfg.TUM3_CFG_uplink_username, "").trim();
-                            String tmp_password = tmp_props.getProperty(Tum3cfg.TUM3_CFG_uplink_password, "").trim();
-
-                            InterconInitiator tmp_initiator = new WsInterconInitiator(
-                                tmp_serv_addr, tmp_trusted_keys,
-                                tmp_username, tmp_password,
-                                tmp_connect_timeout,
-                                new SessionProducerWebMetaUpl(tmp_i, tmp_username, tmp_password, tmp_serv_addr)
-                            );
-                            Tum3Db.getDbInstance(tmp_i).setUplink(tmp_initiator);
-                            Tum3Logger.DoLog(tmp_db_name, true, "Info: creating uplink caller for " + tmp_serv_addr);
-                        } else {
-                            Tum3Logger.DoLog(tmp_db_name, true, "Warning: uplink configuration looks incomplete, skipping.");
+                    if (glb_cfg.getDbDownBulkEnabled(tmp_i)) {
+                        String tmp_url = getInitParameter(CONST_TUM3_INTR_BULK_PARAM + tmp_db_name);
+                        if (null == tmp_url) tmp_url = "";
+                        if (!tmp_url.isEmpty()) {
+                            //System.out.println("[DEBUG] bulk tmp_db_name=<" + tmp_db_name + ">, tmp_url=<" + tmp_url + ">");
+                            try {
+                                ServerEndpointConfig.Builder tmpBuilder = ServerEndpointConfig.Builder.create(Aq2WsEndpointServer.class, tmp_url);
+                                tmpBuilder.configurator(new CustomServerConfigurator(new SessionProducerWebBulkSrv(tmp_i)));
+                                serverContainer.addEndpoint(tmpBuilder.build());
+                                Tum3Logger.DoLog(tmp_db_name, false, "Info: created WS bulk intercon endpoint <" + tmp_url + "> for database <" + tmp_db_name + ">");
+                            } catch (DeploymentException e) {
+                                throw new ServletException(e.toString());
+                            }
                         }
-                      } catch (Exception e) {
-                            Tum3Logger.DoLog(tmp_db_name, true, "IMPORTANT: failed to create WS uplink endpoint, error: " + e.toString());
-                      }
                     }
+                    if (glb_cfg.getDbUplinkEnabled(tmp_i))
+                        new TempUplinkCreatorMetaCli().DoCreate(tmp_i, tmp_db_name, Tum3cfg.TUM3_CFG_uplink_serv_addr); // YYY
+                    if (glb_cfg.getDbUpBulkEnabled(tmp_i))
+                        new TempUplinkCreatorBulkCli().DoCreate(tmp_i, tmp_db_name, Tum3cfg.TUM3_CFG_upbulk_serv_addr); // YYY
                 }
             }
         }

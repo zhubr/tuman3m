@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -29,6 +29,9 @@ public class Tum3SignalList {
     private final static String TUM3_CFG_db_conf_root = "db_conf_root";
 
     private final static String const_signal_allow_ext_upl = "AllowExtUpl";
+
+    public final static String const_signal_title = "Title";
+    public final static String const_signal_is_density = "IsDensity";
 
     private static volatile Tum3SignalList SignalList = null; // Got it separated from db.
     private static final Object SignalListQuickLock = new Object(); // moved from Tum3Db and made static

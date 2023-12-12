@@ -23,110 +23,49 @@ import aq2db.*;
 import aq2net.*;
 
 
-public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
+public abstract class SrvLinkMeta extends SrvLinkIntercon {
 
 
-    protected final static String JSON_NAME_function = "function";
-    protected final static String JSON_NAME_db = "db";
-    protected final static String JSON_NAME_username = "username";
-    protected final static String JSON_NAME_password = "password";
-    protected final static String JSON_NAME_body = "body";
     protected final static String JSON_NAME_receiver = "receiver";
     protected final static String JSON_NAME_userlist = "userlist";
     protected final static String JSON_NAME_req_id = "req_id";
     protected final static String JSON_NAME_shot = "shot";
     protected final static String JSON_NAME_glb_fwd_id = "glb_fwd_id";
-    protected final static String JSON_NAME_err_msg = "err_msg";
     protected final static String JSON_NAME_server_info = "server_info";
 
-    protected final static String JSON_FUNC_hello = "hello";
-    protected final static String JSON_FUNC_welcome = "welcome";
     protected final static String JSON_FUNC_talk = "talk";
     protected final static String JSON_FUNC_users = "users";
     protected final static String JSON_FUNC_ugcfwd = "ugcfwd";
     protected final static String JSON_FUNC_ugcntfy = "ugcntfy";
 
-    private static volatile int dbg_serial = 0;
-    public int my_dbg_serial = 0;
-
-    protected final static String TUM3_CFG_idle_check_alive_delay = "idle_check_alive_meta"; // YYY
-    protected final static String TUM3_CFG_max_out_buff_count = "max_out_buff_count_meta"; // YYY
-    private final static String TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes_meta"; // YYY
-
-    private final static int CONST_OUT_BUFF_COUNT_MAX_default = 40; // YYY
-    private final static int CONST_KEEPALIVE_INTERVAL_SEC_default = 20;
-
     private final static int CONST_MAX_TALK_OUT_QUEUE = 20;
     private final static int CONST_MAX_REQ_STRING_COUNT = 1000;
 
-    private final static int CONST_MIN_OUT_BUFF_default = 10;  // kbytes. // YYY
-    private static final int CONST_KEEPALIVE_INTERVAL_SEC[];
-    private static final int CONST_OUT_BUFF_COUNT_MAX[];
-    private static int CONST_MIN_OUT_BUFF[] = InitMinOutBuffConst();  // Should be per-db now.
+    private final static TunedSrvLinkParsMeta tuned_pars_meta = new TunedSrvLinkParsMeta(); // YYY
 
-    protected volatile boolean WasAuthorized = false;
-    protected long LoginFailedAt;
-    protected boolean LoginFailedState = false;
-    protected volatile String AuthorizedLogin = "";
-    protected Tum3Db dbLink = null;
 
-    private volatile int FFeatureSelectWord = 0; // To be removed
-    private int RCompatFlags = 0; // To be removed
-    private volatile int RCompatVersion; // To be removed
+    private static class TunedSrvLinkParsMeta extends SrvLinkBase.TunedSrvLinkPars {
 
-    private int db_index;
-    private String db_name;
+        public void AssignStaticValues() { // YYY
 
-    static {
+            LINK_PARS_LABEL = "meta";
 
-        int tmp_db_count = Tum3cfg.getGlbInstance().getDbCount();
-        Tum3cfg cfg = Tum3cfg.getGlbInstance();
+            TUM3_CFG_idle_check_alive_delay = "idle_check_alive_meta"; // YYY
+            TUM3_CFG_max_out_buff_count = "max_out_buff_count_meta"; // YYY
+            TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes_meta"; // YYY
 
-        CONST_OUT_BUFF_COUNT_MAX = new int[tmp_db_count];
-        CONST_KEEPALIVE_INTERVAL_SEC = new int[tmp_db_count];
-
-        for (int tmp_i = 0; tmp_i < tmp_db_count; tmp_i++) {
-            String db_name = cfg.getDbName(tmp_i);
-            CONST_OUT_BUFF_COUNT_MAX[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_max_out_buff_count, CONST_OUT_BUFF_COUNT_MAX_default);
-            CONST_KEEPALIVE_INTERVAL_SEC[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_idle_check_alive_delay, CONST_KEEPALIVE_INTERVAL_SEC_default);
-
-            Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_OUT_BUFF_COUNT_MAX=" + CONST_OUT_BUFF_COUNT_MAX[tmp_i]);
-            Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_KEEPALIVE_INTERVAL_SEC=" + CONST_KEEPALIVE_INTERVAL_SEC[tmp_i]);
+            CONST_OUT_BUFF_COUNT_MAX_default = 40;
+            CONST_KEEPALIVE_INTERVAL_SEC_default = 20;
+            CONST_MIN_OUT_BUFF_default = 10;  // kbytes.
         }
     }
 
     public SrvLinkMeta(int _db_idx, SrvLinkOwner thisOwner) {
-        super(thisOwner);
-        db_index = _db_idx;
-        db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
-        dbg_serial++;
-        my_dbg_serial = dbg_serial;
+        super(_db_idx, tuned_pars_meta, thisOwner);
         TalkMsgQueue = new GeneralDbDistribEvent[CONST_MAX_TALK_OUT_QUEUE];
     }
 
-    protected int getDbIndex() {
-
-        return db_index;
-
-    }
-
-    private final static int[] InitMinOutBuffConst() {
-
-        int tmp_arr[] = new int[Tum3cfg.getGlbInstance().getDbCount()];
-        Tum3cfg cfg = Tum3cfg.getGlbInstance();
-        for (int tmp_i = 0; tmp_i < tmp_arr.length; tmp_i++) {
-            tmp_arr[tmp_i] = 1024*Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_min_out_buff_kbytes, CONST_MIN_OUT_BUFF_default);
-            Tum3Logger.DoLog(cfg.getDbName(tmp_i), false, "DEBUG: CONST_MIN_OUT_BUFF=" + tmp_arr[tmp_i]);
-        }
-        return tmp_arr;
-
-    }
-
-    protected OutgoingBuff newOutgoingBuff() {
-
-        return new OutgoingBuff(CONST_MIN_OUT_BUFF[db_index]);
-
-    }
+    protected String InterconLabel() { return "meta"; }
 
     protected void InitDbAccess() {
 
@@ -134,12 +73,6 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
             dbLink = Tum3Db.getDbInstance(db_index);
             Tum3Broadcaster.addclient(dbLink, this);
         }
-
-    }
-
-    public Tum3Db GetDb() {
-
-        return dbLink;
 
     }
 
@@ -273,6 +206,13 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
             jo.put(JSON_NAME_userlist, tmp_usrlst);
     }
 
+    protected void ExtendJsonLoginReply(JSONObject jo2) {
+
+        FillUserList(jo2); // YYY
+        jo2.put(JSON_NAME_server_info, dbLink.getThisServerInfo()); // YYY
+
+    }
+
     protected void ForceSendUserList(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
 
         JSONObject jo2 = new JSONObject();
@@ -283,15 +223,7 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
 
     }
 
-    private void Process_JSON(byte thrd_ctx, RecycledBuffContext ctx, byte[] req_body, int req_trailing_len) throws Exception {
-
-        String tmp_json_str = Tum3Util.BytesToStringRaw(req_body, 0, req_trailing_len);
-        //JSONObject jo = new JSONObject(tmp_json_str);
-        onJSON_Intrnl(thrd_ctx, ctx, new JSONObject(tmp_json_str));
-
-    }
-
-    private void onJSON_Intrnl(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
+    protected void onJSON_Intrnl(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
 
         onJSON(thrd_ctx, ctx, jo);
 
@@ -324,104 +256,12 @@ public abstract class SrvLinkMeta extends SrvLinkBase implements TumProtoConsts,
         Tum3Broadcaster.intercon_users(dbLink, this, tmp_body);
     }
 
-    protected void Send_JSON(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
-
-        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, ctx);
-
-        String tmpMsg = jo.toString();
-
-        tmpBuff.InitSrvReply(REQUEST_TYPE_JSON, tmpMsg.length(), tmpMsg.length());
-        tmpBuff.putString(tmpMsg);
-        PutBuff(thrd_ctx, tmpBuff, ctx);
-
-    }
-
-    private void Process_PingHighlevel(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
-        OutgoingBuff tmpBuff = null;
-        tmpBuff = GetBuff(thrd_ctx, ctx);
-        tmpBuff.InitSrvReply(REQUEST_TYPE_KEEPCONNECTED, 0, 0);
-        PutBuff(thrd_ctx, tmpBuff, ctx);
-
-    }
-
-    private void Process_PingReply() {
-        //System.out.println("[aq2j] DEBUG: got ping reply.");
-        keepalive_sent_inline = false;
-    }
-
-    protected boolean getLoginFailedState() {
-
-        return LoginFailedState;
-
-    }
-
-    protected long getLoginFailedAt() {
-
-        return LoginFailedAt;
-
-    }
-
-    protected boolean getWasAuthorized() {
-
-        return WasAuthorized;
-
-    }
-
-    protected String getLogPrefixName() {
-
-        return db_name;
-
-    }
-
-    protected void ExecuteReq(byte thrd_ctx, byte req_code, byte[] req_body, int req_trailing_len) throws Exception {
-
-        if (REQUEST_TYPE_JSON == req_code) Process_JSON(thrd_ctx, null, req_body, req_trailing_len);
-        else if (REQUEST_TYPE_ANYBODYTHERE == req_code) Process_PingHighlevel(thrd_ctx, null);
-        else if (REQUEST_TYPE_KEEPCONNECTED == req_code) Process_PingReply();
-        else {
-            Tum3Logger.DoLog(db_name, true, "WARNING: unknown request, code=" + Integer.toHexString(req_code & 0xFF) + " len=" + req_trailing_len + ";" + " Session: " + DebugTitle());
-        }
-    }
-
-    protected int getKeepaliveTimeoutVal() {
-
-        return CONST_KEEPALIVE_INTERVAL_SEC[db_index];
-
-    }
-
-    protected int getOutBuffCountMax() {
-
-        return CONST_OUT_BUFF_COUNT_MAX[db_index];
-
-    }
-
     public void ClientReaderTick(byte thrd_ctx, ClientWriter outbound) throws Exception {
         // This function is guaranteed to be called by the main thread only.
 
         //if (null != currWritingShotHelper) currWritingShotHelper.tick();
 
         super.ClientReaderTick(thrd_ctx, outbound);
-    }
-
-    protected boolean NoPauseOut() {
-
-        return true;
-
-    }
-
-    public byte[] GetBinaryUsername() {
-
-        return null;
-
-    }
-
-    private String AuthorizedLoginPlus() {
-
-        if (WasAuthorized)
-            return AuthorizedLogin + "(intercon)." + db_name; // YYY
-        else
-            return "(intercon)." + db_name; // YYY
-
     }
 
 }

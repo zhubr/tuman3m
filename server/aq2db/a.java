@@ -14,5 +14,5 @@ package aq2db;
 
 public interface a
 {
-    public final static int CurrentVerNum = 429;
+    public final static int CurrentVerNum = 433;
 }

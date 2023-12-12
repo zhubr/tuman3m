@@ -58,6 +58,7 @@ public class Tum3Db implements Runnable, AppStopHook {
     public final boolean isWriteable, withSyncState; // YYY
     private Tum3Db master_db = null;
     private Tum3UgcWorker ugc_worker = null; // YYY
+    private volatile boolean IsWaitingTrig = false; // YYY
 
     private Object diag_lock = new Object(); // YYY
     private int diag_free_space_gb = 0; // YYY
@@ -688,7 +689,13 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     public void setUplink(InterconInitiator _initiator) {
 
-        new UplinkScheduler(_initiator, this).WorkStart();
+        new UplinkScheduler(_initiator, this, "meta").WorkStart();
+
+    }
+
+    public void setUpBulk(InterconInitiator _initiator) {
+
+        new UplinkScheduler(_initiator, this, "bulk").WorkStart();
 
     }
 
@@ -916,6 +923,26 @@ public class Tum3Db implements Runnable, AppStopHook {
 
         Tum3Db tmp_inst = getDbInstance(_db_idx, true);
         return tmp_inst.GetShotNumber_int(_shot_id);
+
+    }
+
+    private int GetWaitingTrig_int() {
+
+        if (IsWaitingTrig) return 1; else return 0;
+
+    }
+
+    public static int GetWaitingTrig(int _db_idx) {
+
+        Tum3Db tmp_inst = getDbInstance(_db_idx, true);
+        if (null == tmp_inst) return -1; // YYY
+        else return tmp_inst.GetWaitingTrig_int();
+
+    }
+
+    public void setWaitingTrig(boolean _value) {
+
+        IsWaitingTrig = _value;
 
     }
 

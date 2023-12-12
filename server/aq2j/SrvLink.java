@@ -63,7 +63,7 @@ class ReqTraceListClass extends ArrayList<TraceRequest> {
 class PendingTraceListStrings extends ArrayList<String> {
 }
 
-public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf, UgcReplyHandlerExt, aq3sender {
+public class SrvLink extends SrvLinkBase implements UgcReplyHandlerExt, aq3sender {
 
     private final static String CONST_MSG_SRVLINK_ERR01 = "Internal error opening shot name";
     private final static String CONST_MSG_SRVLINK_ERR02 = "Internal error locating shot name";
@@ -87,34 +87,23 @@ public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf,
         213, 126, 228, 60, 99, 87, 70, 194, 216, 93, 224, 214
     };
 
-    private final static int min_supported_app_ver = 374; // YYY
+    private final static int min_supported_app_ver = 428; // YYY
 
     private static volatile int dbg_serial = 0;
     public int my_dbg_serial = 0;
 
     private aq3h aq3hInstance = null;
 
-    private final static String TUM3_CFG_max_out_buff_count = "max_out_buff_count"; // YYY
-    private final static String TUM3_CFG_idle_check_alive_delay = "idle_check_alive_delay"; // YYY
-    private final static String TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes";
+    private final static TunedSrvLinkParsMain tuned_pars_main = new TunedSrvLinkParsMain(); // YYY
 
-    private final static String const_signal_title = "Title";
-    private final static String const_signal_is_density = "IsDensity";
-
-    private final static int CONST_OUT_BUFF_COUNT_MAX_default = 10;
     private final static int CONST_MAX_TRACE_OUT_QUEUE_KBYTES_default = 1;
     private final static int CONST_MAX_TRACE_OUT_QUEUE_LEN_default = 10;
-    private final static int CONST_KEEPALIVE_INTERVAL_SEC_default = 20;
 
     private final static int CONST_MAX_TALK_OUT_QUEUE = 20;
     private final static int CONST_MAX_REQ_STRING_COUNT = 1000;
 
-    private final static int CONST_MIN_OUT_BUFF_default = 1;  // kbytes.
-    private static final int CONST_KEEPALIVE_INTERVAL_SEC[];
     private static final int CONST_MAX_TRACE_OUT_QUEUE_BYTES[];
     private static final int CONST_MAX_TRACE_OUT_QUEUE_LEN[];
-    private static final int CONST_OUT_BUFF_COUNT_MAX[];
-    private static int CONST_MIN_OUT_BUFF[] = InitMinOutBuffConst();  // Should be per-db now.
 
     private boolean WasAuthorized = false;
     private volatile int FFeatureSelectWord = 0; // Moved from local.
@@ -146,7 +135,6 @@ public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf,
     private int found_look4ver = 0;
     private Tum3AppUpdateHelper app_helper = null;
 
-    private int db_index;
     private String db_name;
 
     static {
@@ -156,48 +144,40 @@ public class SrvLink extends SrvLinkBase implements TumProtoConsts, SrvLinkIntf,
 
         CONST_MAX_TRACE_OUT_QUEUE_BYTES = new int[tmp_db_count];
         CONST_MAX_TRACE_OUT_QUEUE_LEN = new int[tmp_db_count];
-        CONST_OUT_BUFF_COUNT_MAX = new int[tmp_db_count];
-        CONST_KEEPALIVE_INTERVAL_SEC = new int[tmp_db_count];
 
         for (int tmp_i = 0; tmp_i < tmp_db_count; tmp_i++) {
             String db_name = cfg.getDbName(tmp_i);
             CONST_MAX_TRACE_OUT_QUEUE_BYTES[tmp_i] = 1024 * Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_max_out_queue_kbytes, CONST_MAX_TRACE_OUT_QUEUE_KBYTES_default);
             CONST_MAX_TRACE_OUT_QUEUE_LEN[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_max_out_queue_len, CONST_MAX_TRACE_OUT_QUEUE_LEN_default);
-            CONST_OUT_BUFF_COUNT_MAX[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_max_out_buff_count, CONST_OUT_BUFF_COUNT_MAX_default);
-            CONST_KEEPALIVE_INTERVAL_SEC[tmp_i] = Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_idle_check_alive_delay, CONST_KEEPALIVE_INTERVAL_SEC_default);
 
             Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_MAX_TRACE_OUT_QUEUE_BYTES=" + CONST_MAX_TRACE_OUT_QUEUE_BYTES[tmp_i]);
             Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_MAX_TRACE_OUT_QUEUE_LEN=" + CONST_MAX_TRACE_OUT_QUEUE_LEN[tmp_i]);
-            Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_OUT_BUFF_COUNT_MAX=" + CONST_OUT_BUFF_COUNT_MAX[tmp_i]);
-            Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_KEEPALIVE_INTERVAL_SEC=" + CONST_KEEPALIVE_INTERVAL_SEC[tmp_i]);
+        }
+    }
+
+    private static class TunedSrvLinkParsMain extends SrvLinkBase.TunedSrvLinkPars {
+
+        public void AssignStaticValues() { // YYY
+
+            //System.out.println("[aq2j] DEBUG: now in TunedSrvLinkParsMain() constructor.");
+            LINK_PARS_LABEL = "";
+
+            TUM3_CFG_idle_check_alive_delay = "idle_check_alive_delay"; // YYY Moved here from static.
+            TUM3_CFG_max_out_buff_count = "max_out_buff_count"; // YYY Moved here from static.
+            TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes"; // YYY Moved here from static.
+
+            CONST_OUT_BUFF_COUNT_MAX_default = 10; // YYY Moved here from static.
+            CONST_KEEPALIVE_INTERVAL_SEC_default = 20; // YYY Moved here from static.
+            CONST_MIN_OUT_BUFF_default = 1;  // kbytes. // YYY Moved here from static.
         }
     }
 
     public SrvLink(int _db_idx, SrvLinkOwner thisOwner) {
-        super(thisOwner);
-        db_index = _db_idx;
+        super(_db_idx, tuned_pars_main, thisOwner);
         db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
         dbg_serial++;
         my_dbg_serial = dbg_serial;
         TalkMsgQueue = new GeneralDbDistribEvent[CONST_MAX_TALK_OUT_QUEUE];
-    }
-
-    private final static int[] InitMinOutBuffConst() {
-
-        int tmp_arr[] = new int[Tum3cfg.getGlbInstance().getDbCount()];
-        Tum3cfg cfg = Tum3cfg.getGlbInstance();
-        for (int tmp_i = 0; tmp_i < tmp_arr.length; tmp_i++) {
-            tmp_arr[tmp_i] = 1024*Tum3cfg.getIntValue(tmp_i, true, TUM3_CFG_min_out_buff_kbytes, CONST_MIN_OUT_BUFF_default);
-            Tum3Logger.DoLog(cfg.getDbName(tmp_i), false, "DEBUG: CONST_MIN_OUT_BUFF=" + tmp_arr[tmp_i]);
-        }
-        return tmp_arr;
-
-    }
-
-    protected OutgoingBuff newOutgoingBuff() {
-
-        return new OutgoingBuff(CONST_MIN_OUT_BUFF[db_index] /* db_index */); // YYY
-
     }
 
     public Tum3Db GetDb() {
@@ -1129,8 +1109,13 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if (RLinkKilobits > 2*1024*1024) RLinkKilobits = 2*1024*1024;
         FModeratedDownloadBytes = RLinkKilobits << 6; // Reminder: this sets approx 6 Mbytes for 100Mbit link.
 
+        String tmp_critical_msg = ""; // YYY
         if ((RCompatVersion > 0) && (RCompatVersion < min_supported_app_ver))
-            _NewMessageBoxCompat(thrd_ctx, "IMPORTANT! This program version is critically outdated! It may not work correctly. Please update.", false); // YYY
+            tmp_critical_msg = tmp_critical_msg + "IMPORTANT! This program version is critically outdated! It may not work correctly. Please update.\r\n";
+        if (Tum3Logger.BogusClockDetected()) // YYY
+            tmp_critical_msg = tmp_critical_msg + "IMPORTANT! Server reports wrong clock setting. Database functionality will be limited.\r\n";
+        if (!tmp_critical_msg.isEmpty())
+            _NewMessageBoxCompat(thrd_ctx, tmp_critical_msg, false); // YYY
 
         //System.out.println("[aq2j] DEBUG: client version = " + RCompatVersion + "; kilobits = " + RLinkKilobits);
     }
@@ -1843,9 +1828,9 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if ((tmp_index < 1) || (tmp_index > tmpSignalList.SignalCount())) return tmp_err_prefix + "signal id is not valid.";
         else {
             NameValueList tmp_entry = tmpSignalList.GetSignalEntry(tmp_index);
-            tmp_name = tmp_entry.GetValueFor(const_signal_title, tmp_name);
+            tmp_name = tmp_entry.GetValueFor(Tum3SignalList.const_signal_title, tmp_name);
             tmp_err_prefix = "Could not update " + tmp_name + " of " + _shot_name + ": ";
-            if (!"1".equals(tmp_entry.GetValueFor(const_signal_is_density, ""))) return tmp_err_prefix + "not a density signal.";
+            if (!"1".equals(tmp_entry.GetValueFor(Tum3SignalList.const_signal_is_density, ""))) return tmp_err_prefix + "not a density signal.";
         }
 
         Tum3Shot tmp_shot = null;
@@ -1906,7 +1891,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if ((tmp_index < 1) || (tmp_index > tmpSignalList.SignalCount())) return tmp_err_prefix + "signal id is not valid.";
         else {
             NameValueList tmp_entry = tmpSignalList.GetSignalEntry(tmp_index);
-            tmp_name = tmp_entry.GetValueFor(const_signal_title, tmp_name);
+            tmp_name = tmp_entry.GetValueFor(Tum3SignalList.const_signal_title, tmp_name);
             tmp_err_prefix = "Could not store " + tmp_name + " of " + _shot_name + ": ";
             if (!Tum3SignalList.AllowExtUpload(tmp_entry)) return tmp_err_prefix + "not allowed";
         }
@@ -1975,7 +1960,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if ((tmp_index < 1) || (tmp_index > tmpSignalList.SignalCount())) return tmp_err_prefix + "signal id is not valid.";
         else {
             NameValueList tmp_entry = tmpSignalList.GetSignalEntry(tmp_index);
-            tmp_name = tmp_entry.GetValueFor(const_signal_title, tmp_name);
+            tmp_name = tmp_entry.GetValueFor(Tum3SignalList.const_signal_title, tmp_name);
             tmp_err_prefix = "Could not delete " + tmp_name + " of " + _shot_name + ": ";
             if (!Tum3SignalList.AllowExtUpload(tmp_entry)) return tmp_err_prefix + "not allowed";
         }
@@ -2026,18 +2011,6 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             return tmp_err_prefix + tmp_result;
         else
             return "";
-
-    }
-
-    protected int getKeepaliveTimeoutVal() {
-
-        return CONST_KEEPALIVE_INTERVAL_SEC[db_index];
-
-    }
-
-    protected int getOutBuffCountMax() {
-
-        return CONST_OUT_BUFF_COUNT_MAX[db_index];
 
     }
 

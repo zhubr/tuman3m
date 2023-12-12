@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -16,6 +16,7 @@ package aq2db;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.Calendar;
 import java.text.SimpleDateFormat;
@@ -31,13 +32,17 @@ public class Tum3Logger implements Runnable, AppStopHook {
     private final static int const_block_lines_limit = 2000;
     private final static int CONST_WRITER_WAKEUP_INTERVAL = 500;
     private final static int CONST_LOG_BLOCKER_WAKEUP_MILLIS = 100;
+    private final static int CONST_LASTDATE_FLUSH_MINUTES = 120; // YYY
     private final static String log_format_string = "yyyy-MM-dd HH:mm:ss.SSS";
     private final static String log_fname_string = "yyyy-MM";
+    private final static String log_fulldate_str = "yyyy-MM-dd"; // YYY
     private final static String const_log_prefix = "[aq2j] ";
+    private final static String const_log_fname_prefix = "aq2j-"; // YYY
     private final static String const_global = "global";
     private final static String TUM3_CFG_log_path = "log_path";
     private final SimpleDateFormat log_time_format = new SimpleDateFormat(log_format_string);
     private final SimpleDateFormat log_fname_format = new SimpleDateFormat(log_fname_string);
+    private final SimpleDateFormat log_fulldate_format = new SimpleDateFormat(log_fulldate_str); // YYY
     private final String newline = System.lineSeparator();
 
     private final String log_file_path;
@@ -57,6 +62,18 @@ public class Tum3Logger implements Runnable, AppStopHook {
     private volatile AdditionalNotifier aux_warnings = null;
     private final Object aux_warnings_lock = new Object();
 
+    private boolean lastdate_open = false, lastdate_stor_failed = false; // YYY
+    private RandomAccessFile lastdate_raf; // YYY
+    private static volatile boolean bogus_clock = false; // YYY
+    private Calendar lastdate_cal = Calendar.getInstance(); // YYY
+    private long lastdate_next_flush = 0; // YYY
+
+
+    public final static boolean BogusClockDetected() { // YYY
+
+        return bogus_clock;
+
+    }
 
     public interface AdditionalNotifier {
 
@@ -75,7 +92,7 @@ public class Tum3Logger implements Runnable, AppStopHook {
             logger = new Tum3Logger(tmp_path);
             if (!tmp_path.isEmpty()) {
                 new Thread(logger).start();
-                logger.DoLog_internal("-", false, "Logging started, ver " + a.CurrentVerNum, const_global, false);
+                logger.DoLog_internal("-", false, "Logging started, ver " + a.CurrentVerNum, const_global, false, false);
             }
 
         }
@@ -101,17 +118,72 @@ public class Tum3Logger implements Runnable, AppStopHook {
 
     }
 
+    private void MaybeUpdateLastDate(long _curr_millis) {
+
+        try {
+            lastdate_raf.seek(0);
+            lastdate_cal.setTimeInMillis(_curr_millis);
+            String tmp_date_line = log_fulldate_format.format(lastdate_cal.getTime());
+            byte tmp_b[] = Tum3Util.StringToBytesRaw(tmp_date_line);
+            lastdate_raf.write(tmp_b);
+            //System.out.println("[DEBUG] bum!");
+            lastdate_raf.setLength(lastdate_raf.getFilePointer());
+            lastdate_next_flush = _curr_millis + (long)60000 * CONST_LASTDATE_FLUSH_MINUTES;
+        } catch (Exception e) {
+            lastdate_stor_failed = true;
+            DoLog_internal("-", true, "IMPORTANT! Logging of last date failed with <" + e.toString() + ">", const_global, false, false);
+        }
+    }
+
     private void OpenLog() throws Exception {
 
-        fos = new FileOutputStream(log_file_path + "aq2j-" + last_fname + ".log", true);
-        osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8);
+        if (with_file && !lastdate_open && !lastdate_stor_failed && !bogus_clock)
+            try {
+              lastdate_stor_failed = true;
+              lastdate_raf = new RandomAccessFile(log_file_path + const_log_fname_prefix + "lastdate.log", "rw"); // YYY
+              lastdate_open = true;
+              lastdate_stor_failed = false;
+              if (lastdate_raf.length() >= 10) {
+                  byte tmp_b[] = new byte[10];
+                  String tmp_prev_date;
+                  lastdate_raf.readFully(tmp_b);
+                  tmp_prev_date = Tum3Util.BytesToStringRaw(tmp_b);
+                  if ((tmp_prev_date.charAt(4) == '-') && (tmp_prev_date.charAt(7) == '-')) {
+                      int tmp_year, tmp_month, tmp_day;
+                      try {
+                          tmp_year = Integer.parseInt(tmp_prev_date.substring(0, 4));
+                          tmp_month = Integer.parseInt(tmp_prev_date.substring(5, 7));
+                          tmp_day = Integer.parseInt(tmp_prev_date.substring(8, 10));
+                          //System.out.println("[DEBUG] Last date log: tmp_year=" + tmp_year + " tmp_month=" + tmp_month + " tmp_day=" + tmp_day);
+                          if (new Tum3Time(tmp_year, tmp_month, tmp_day, 0, 0, 0).IsInFuture()) {
+                              //System.out.println("[DEBUG] Last date log: Bogus clock!");
+                              bogus_clock = true;
+                              lastdate_stor_failed = true;
+                              lastdate_raf.close();
+                              lastdate_raf = null;
+                              lastdate_open = false;
+                          }
+                      } catch (Exception ignored) {}
+                  }
+              }
+            } catch (Exception e) {
+              lastdate_stor_failed = true;
+              DoLog_internal("-", true, "IMPORTANT! Opening log of last date failed with <" + e.toString() + ">", const_global, false, false);
+            }
+
+        if (with_file && !bogus_clock) { // YYY
+            fos = new FileOutputStream(log_file_path + const_log_fname_prefix + last_fname + ".log", true);
+            osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8);
+        }
 
     }
 
     private void FlushLog() throws Exception {
 
-        for (String tmp_st: buff_flushing) { osw.write(tmp_st); osw.write(newline); }
-        osw.flush();
+        if ((null != osw) && !bogus_clock) { // YYY
+            for (String tmp_st: buff_flushing) { osw.write(tmp_st); osw.write(newline); }
+            osw.flush();
+        }
         if (buff_filling.size() >= const_block_lines_heavy)
             synchronized(room_avail_wait) { room_avail_wait.notifyAll(); }
 
@@ -127,7 +199,14 @@ public class Tum3Logger implements Runnable, AppStopHook {
             fos.close();
             fos = null;
         }
+    }
 
+    private void DoSwapLists() {
+        if (buff_filling.size() > 0) {
+            ArrayList<String> tmp_queue = buff_filling;
+            buff_filling = buff_flushing;
+            buff_flushing = tmp_queue;
+        }
     }
 
     public void run() {
@@ -150,19 +229,34 @@ public class Tum3Logger implements Runnable, AppStopHook {
             synchronized(log_lock) {
                 try {
                     log_lock.wait(CONST_WRITER_WAKEUP_INTERVAL);
-                    if (buff_filling.size() > 0) {
-                        ArrayList<String> tmp_queue = buff_filling;
-                        buff_filling = buff_flushing;
-                        buff_flushing = tmp_queue;
-                    }
+                    DoSwapLists();
                 } catch(Exception e) { }
+            }
+
+            if (lastdate_open && !lastdate_stor_failed && !bogus_clock) {
+                long tmp_millis = System.currentTimeMillis();
+                if (tmp_millis > lastdate_next_flush) MaybeUpdateLastDate(tmp_millis);
             }
         }
 
+        if (lastdate_open && !lastdate_stor_failed && !bogus_clock)
+            MaybeUpdateLastDate(System.currentTimeMillis());
+
+        if (lastdate_open && (null != lastdate_raf))
+            try {
+                lastdate_open = false;
+                lastdate_raf.close(); // YYY
+            } catch (Exception e) {
+                DoLog_internal("-", true, "IMPORTANT! Closing log of last date failed with <" + e.toString() + ">", const_global, false, true); // YYY
+            }
+
         try {
 
-            DoLog_internal("-", false, "Logging stopped.", const_global, false);
+            DoLog_internal("-", false, "Logging stopped.", const_global, false, true);
+            //System.out.println("[DEBUG] Logger {Logging stopped.} passed, size=" + buff_filling.size());
             CheckAndFlush();
+            synchronized(log_lock) { DoSwapLists(); } // YYY
+            CheckAndFlush(); // YYY
             CloseLog();
 
         } catch (Exception e) {
@@ -203,12 +297,24 @@ public class Tum3Logger implements Runnable, AppStopHook {
 
     }
 
-    private void DoLog_internal(String _DbName, boolean _IsCritical, String _MsgText, String _MsgScope, boolean _disable_aux) {
+    private void DoLog_internal(String _DbName, boolean _IsCritical, String _MsgText, String _MsgScope, boolean _disable_aux, boolean _disregard_terminating) {
 
         long tmp_millis = System.currentTimeMillis();
         long tmp_thrd_id = Thread.currentThread().getId();
         String tmp_full_line = null;
         boolean tmp_finished = false;
+
+        if (is_terminating && !_disregard_terminating) {
+            if (_IsCritical) {
+                Calendar tmp_log_cal = Calendar.getInstance();
+                tmp_log_cal.setTimeInMillis(tmp_millis);
+                tmp_full_line = 
+                    log_time_format.format(tmp_log_cal.getTime())
+                    + " % {" + tmp_thrd_id + "} % <"+ _DbName + ":" + _MsgScope + "> % " + _MsgText;
+                System.out.println(const_log_prefix + tmp_full_line); // YYY
+            }
+            return; // YYY
+        }
 
         if (_IsCritical && !_disable_aux) synchronized(aux_warnings_lock) {
             if (aux_warnings != null) aux_warnings._NewMessageBox("<" + _MsgScope + "> " + Tum3Util.JavaStrToTum3Str(_MsgText));
@@ -299,13 +405,13 @@ public class Tum3Logger implements Runnable, AppStopHook {
 
     public static final void DoLogRestricted(String _DbName, boolean _IsCritical, String _MsgText) {
 
-        getInstance().DoLog_internal(_DbName, _IsCritical, _MsgText, const_global, true);
+        getInstance().DoLog_internal(_DbName, _IsCritical, _MsgText, const_global, true, false);
 
     }
 
     public static final void DoLog(String _DbName, boolean _IsCritical, String _MsgText, String _MsgScope) {
 
-        getInstance().DoLog_internal(_DbName, _IsCritical, _MsgText, _MsgScope, false);
+        getInstance().DoLog_internal(_DbName, _IsCritical, _MsgText, _MsgScope, false, false);
 
     }
 

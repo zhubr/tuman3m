@@ -218,9 +218,12 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
             if (!tmp_ip.isEmpty() && !tmp_port.isEmpty()) transp_caller = tmp_ip + ":" + tmp_port;
             transp_user = http_headers.safeGet("x-real-user");
             transp_agent = http_headers.safeGet("user-agent");
-        } else if (_session_producer instanceof SessionProducerWebMetaUpl) { // YYY
-            transp_caller = ((SessionProducerWebMetaUpl)_session_producer).getTargetAddr(); // YYY
-            transp_user = ((SessionProducerWebMetaUpl)_session_producer).getUserName(); // YYY
+        } else if (_session_producer instanceof SessionProducerWebMetaUpl) {
+            transp_caller = ((SessionProducerWebMetaUpl)_session_producer).getTargetAddr();
+            transp_user = ((SessionProducerWebMetaUpl)_session_producer).getUserName();
+        } else if (_session_producer instanceof SessionProducerWebBulkCli) { // YYY
+            transp_caller = ((SessionProducerWebBulkCli)_session_producer).getTargetAddr(); // YYY
+            transp_user = ((SessionProducerWebBulkCli)_session_producer).getUserName(); // YYY
         }
         //System.out.println("[aq2j] DEBUG: tmp_ip=" + tmp_ip + " tmp_port=" + tmp_port + " tmp_user=" + tmp_user + " tmp_agent=" + tmp_agent);
         //if (0 == CONST_MAX_INP_BUFF_BYTES) {

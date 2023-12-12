@@ -23,51 +23,45 @@ import aq2db.*;
 import aq2net.*;
 
 
-public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkOperations {
+public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.UplinkOperations {
 
 
     private String username, password;
     private ArrayList<TempUGCReqHolder> ExecutingList = new ArrayList<TempUGCReqHolder>();
     private long last_checked = System.currentTimeMillis();
 
+    private final static TunedSrvLinkParsBulkCli tuned_pars_bulkcli = new TunedSrvLinkParsBulkCli(); // YYY
 
-    public SrvLinkMetaCli(int _db_idx, SrvLinkOwner thisOwner, String _username, String _password) {
-        super(_db_idx, thisOwner);
+
+    private static class TunedSrvLinkParsBulkCli extends SrvLinkBase.TunedSrvLinkPars {
+
+        public void AssignStaticValues() { // YYY
+
+            LINK_PARS_LABEL = "bulk cli";
+
+            TUM3_CFG_idle_check_alive_delay = "idle_check_alive_bulk_c"; // YYY
+            TUM3_CFG_max_out_buff_count = "max_out_buff_count_bulk_c"; // YYY
+            TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes_bulk_c"; // YYY
+
+            CONST_OUT_BUFF_COUNT_MAX_default = 6;
+            CONST_KEEPALIVE_INTERVAL_SEC_default = 20;
+            CONST_MIN_OUT_BUFF_default = 100;  // kbytes.
+        }
+    }
+
+    public SrvLinkBulkCli(int _db_idx, SrvLinkOwner thisOwner, String _username, String _password) {
+        super(_db_idx, tuned_pars_bulkcli, thisOwner);
         username = _username;
         password = _password;
     }
 
-    public String ExecuteUgc(TempUGCReqHolder holder) throws Exception {
+    protected String InterconLabel() { return "bulk"; }
 
-        AddGeneralEvent(null, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_UGC_REQUEST, holder), null, null);
-        return null; // "Sorry, not implented";
+    public String ExecuteCmdLine(String _cmdline) throws Exception {
 
-    }
+        //AddGeneralEvent(null, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_UGC_REQUEST, holder), null, null);
+        return "Sorry, not implented";
 
-    protected void SyncHandleAsyncEvent(byte thrd_ctx, int _ev_type, GeneralDbDistribEvent _ev) throws Exception {
-
-        if (_ev_type == _ev.DB_EV_UGC_REQUEST) {
-            TempUGCReqHolder tmp_holder = TempUGCReqHolder.class.cast(_ev.get_handler());
-            UgcReplyHandlerExt the_link = tmp_holder.sender_link;
-            // holder.req_id, holder.shot_num, the_link.get_authorized_username(), tmp_bb, the_link
-            JSONObject jo = new JSONObject();
-            jo.put(JSON_NAME_function, JSON_FUNC_ugcfwd);
-            jo.put(JSON_NAME_glb_fwd_id, tmp_holder.glb_fwd_id);
-            jo.put(JSON_NAME_username, the_link.get_authorized_username());
-            jo.put(JSON_NAME_req_id, tmp_holder.req_id);
-            jo.put(JSON_NAME_shot, tmp_holder.shot_num);
-            if (null != tmp_holder.upd_arr)
-                jo.put(JSON_NAME_body, Tum3Util.BytesToStringRaw(tmp_holder.upd_arr));
-            Send_JSON(thrd_ctx, null, jo);
-            while (ExecutingList.size() >= 2*UplinkManager.CONST_UGC_MAX_QUEUE) {
-                TempUGCReqHolder tmp_holder2 = ExecutingList.get(0);
-                ExecutingList.remove(0);
-                tmp_holder2.Refuse("Uplink execution queue got too big");
-            }
-            ExecutingList.add(tmp_holder);
-        } else {
-            super.SyncHandleAsyncEvent(thrd_ctx, _ev_type, _ev);
-        }
     }
 
     @Override
@@ -75,22 +69,22 @@ public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkO
         // This function is guaranteed to be called by the main thread only.
 
         long tmp_now_millis = System.currentTimeMillis();
-        if ((tmp_now_millis - last_checked) > 1000) {
-            for (int i = ExecutingList.size() - 1; i > 0; i--) if ((tmp_now_millis - ExecutingList.get(i).start_millis) > UplinkManager.CONST_UGC_FWD_TIMEOUT_SEC) {
-                TempUGCReqHolder tmp_holder2 = ExecutingList.get(i);
-                ExecutingList.remove(i);
-                tmp_holder2.Refuse("Uplink request execution timed out");
-            }
-        }
+        //if ((tmp_now_millis - last_checked) > 1000) {
+        //    for (int i = ExecutingList.size() - 1; i > 0; i--) if ((tmp_now_millis - ExecutingList.get(i).start_millis) > UplinkManager.CONST_UGC_FWD_TIMEOUT_SEC) {
+        //        TempUGCReqHolder tmp_holder2 = ExecutingList.get(i);
+        //        ExecutingList.remove(i);
+        //        tmp_holder2.Refuse("Uplink request execution timed out");
+        //    }
+        //}
 
         super.ClientReaderTick(thrd_ctx, outbound);
     }
 
     protected void UplinkConnExtra(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
 
-                    dbLink.setOtherServerConnected(true); // YYY
-                    ForceSendUserList(thrd_ctx, ctx); // YYY
-                    UplinkManager.setUplink(getDbIndex(), this); // YYY
+                    //dbLink.setOtherServerConnected(true); // YYY
+                    //ForceSendUserList(thrd_ctx, ctx); // YYY
+                    UplinkBulkMgr.setUplink(getDbIndex(), this); // YYY
 
     }
 
@@ -103,6 +97,7 @@ public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkO
             JsonWelcomeHandler(thrd_ctx, ctx, jo, username);
             return;
         }
+/*
         if (JSON_FUNC_ugcfwd.equals(tmp_func) && WasAuthorized) {
 
             int tmp_glb_fwd_id = jo.getInt(JSON_NAME_glb_fwd_id);
@@ -131,30 +126,48 @@ public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkO
             UplinkManager.DoneUgc(getDbIndex(), tmp_glb_fwd_id);
             return;
         }
-        if (JSON_FUNC_ugcntfy.equals(tmp_func) && WasAuthorized) {
+*/
+    }
 
-            int tmp_req_id = jo.getInt(JSON_NAME_req_id);
-            String tmp_shot = "";
-            if (jo.has(JSON_NAME_shot)) tmp_shot = jo.getString(JSON_NAME_shot);
-            //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] JSON_FUNC_ugcntfy: req_id=" + tmp_req_id + " shot=<" + tmp_shot + ">");
+    protected void InitDbAccess() {
 
-            if (-2 == tmp_req_id)
-                Tum3Broadcaster.DistributeGeneralEvent(dbLink, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_UGC_SHOT_UPD, tmp_shot), this);
-            if (-4 == tmp_req_id)
-                Tum3Broadcaster.DistributeGeneralEvent(dbLink, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_UGC_LIST_UPD, -4), this);
-
-            return;
+        if (null == dbLink) {
+            dbLink = Tum3Db.getDbInstance(db_index);
+            //Tum3Broadcaster.addclient(dbLink, this);
         }
-        super.onJSON(thrd_ctx, ctx, jo);
+
     }
 
     @Override
     protected boolean CancelLinkIntrnl() {
 
         if (super.CancelLinkIntrnl()) return true;
-        UplinkManager.resetUplink(getDbIndex(), this); // YYY
+
+        //dbLink.setOtherServerConnected(false); // YYY
+        //flushWritingShot();
+
+        if (dbLink != null) {
+            //Tum3Broadcaster.release(dbLink, this);
+            dbLink.releaseDbClient();
+            dbLink = null;
+        }
+
+        UplinkBulkMgr.resetUplink(getDbIndex(), this);
 
         return false;
+    }
+
+    public void AddGeneralEvent(Tum3Db origin_db, GeneralDbDistribEvent ev, String thisReceiverName, String thisEchoName) {
+    }
+
+    protected void onJSON_Intrnl(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
+
+        onJSON(thrd_ctx, ctx, jo);
+
+        //if (WasAuthorized) {
+        //    if (jo.has(JSON_NAME_server_info)) dbLink.setOtherServerInfo(jo.getString(JSON_NAME_server_info)); // YYY
+        //    if (jo.has(JSON_NAME_userlist)) BroadcastUsrList(jo.getString(JSON_NAME_userlist));
+        //}
     }
 
     public void DoLink() throws Exception {
@@ -162,7 +175,7 @@ public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkO
         super.DoLink();
 
         //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] Sending hello...");
-        SendHelloMsg(SrvLink.THRD_INTERNAL, null, username, password); // YYY
+        SendHelloMsg(SrvLink.THRD_INTERNAL, null, username, password);
         //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] sent hello.");
 
     }
