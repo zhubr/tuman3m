@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -15,6 +15,8 @@ package aq2db;
 import java.util.*;
 import java.io.*;
 import java.nio.*;
+import java.nio.file.*;
+import java.nio.file.attribute.*;
 
 import aq2net.Tum3Broadcaster;
 
@@ -31,7 +33,27 @@ public class Tum3Db implements Runnable, AppStopHook {
     private final static int CONST_SkipForth = 1;
     private final static int CONST_DontSkip = 2;
 
+    private final static int CONST_SYNC_SHOTS_ONCE_LIMIT = 999; // YYY
+    private static final int MIN_SYNDIR_CLEANUP_MINUTES = 60; // YYY
+    private static final int DAY_SYNDIR_CLEANUP_MINUTES = 60 * 24; // YYY
+
+    private static final String FSUFF_FLAGPREP = ".801"; // YYY
+    public static final String FSUFF_FLAGDONE = ".800"; // YYY
+    public static final String FSUFF_FLAGSYNCING = ".802"; // YYY
+    private static final String FSUFF_FLAGSTALL = ".803"; // YYY
+    private static final String FSUFF_FLAGPREP_ERA = ".805"; // YYY
+    public static final String FSUFF_FLAGDONE_ERA = ".804"; // YYY
+    public static final String FSUFF_FLAGSYNCING_ERA = ".806"; // YYY
+    private static final String FSUFF_FLAGSTALL_ERA = ".807"; // YYY
+
+    private static final String[][] SYNC_SUFF = {
+        {FSUFF_FLAGPREP, FSUFF_FLAGDONE, FSUFF_FLAGSYNCING, FSUFF_FLAGSTALL},
+        {FSUFF_FLAGPREP_ERA, FSUFF_FLAGDONE_ERA, FSUFF_FLAGSYNCING_ERA, FSUFF_FLAGSTALL_ERA }};
+    public static final int SYNF_ADD = 0, SYNF_ERASE = 1;
+    public static final int SYNF_PREP = 0, SYNF_DONE = 1, SYNF_SYNCING = 2, SYNF_STALL = 3;
+
     private final static int CONST_SRVINFO_UPD_MINS = 15; // YYY
+    private final static int CONST_SYNCINFO_PUSH_SEC = 15; // YYY
     private final static int CONST_SHOTS_WAIT_PERIOD = 1;      // Seconds
     private int CONST_SHOTS_DISPOSE_AFTER = 30;   // Seconds
     private int CONST_SHOTS_MAX_OPEN = 100;
@@ -40,6 +62,8 @@ public class Tum3Db implements Runnable, AppStopHook {
     private final static String TUM3_CFG_max_shots_open = "max_shots_open";
     private final static String TUM3_CFG_unused_shot_close_delay = "unused_shot_close_delay";
     private final static String TUM3_CFG_master_db = "master_db";
+    private final static String TUM3_CFG_writeprotect_storage = "writeprotect_storage"; // YYY
+    private final static String TUM3_CFG_enable_sync_raw = "enable_sync_raw"; // YYY
 
     private static Tum3Db[] DbInstance = null;
     private static Object DbCreationLock = new Object();
@@ -49,6 +73,7 @@ public class Tum3Db implements Runnable, AppStopHook {
     private Object MasterListLock = new Object(), PostCreationLock = new Object();
     private boolean creation_complete = false;
     private String FAutoCreatedMonthDir = ""; // YYY
+    public final boolean downbulk_enabled, upbulk_enabled; // YYY
 
     private HashMap<String, Tum3Shot> openShots, closingShots;
     private ArrayList<String> FGlobalShotList = new ArrayList<String>(); // YYY
@@ -70,10 +95,177 @@ public class Tum3Db implements Runnable, AppStopHook {
     private final boolean downlink_enabled; // YYY
     private final boolean uplink_enabled; // YYY
     private String OtherServerInfo = ""; // YYY
+    private volatile String OtherServer_sync_info = ""; // YYY
     private volatile boolean OtherServerIsConnected = false; // YYY
     private volatile Tum3Time OtherServer_last_time; // YYY
     private long diag_next_update; // YYY
     private int warn_free_space_gb = 0; // YYY
+    public final boolean writeprotect_storage, enable_sync_raw; // YYY
+
+    private volatile String bup_start_subdir = "", bup_start_day = ""; // YYY
+    private volatile HashMap<String, StringList> bup_start_done_list = new HashMap<String, StringList>(); // YYY
+    private volatile StringList bup_task_list = new StringList(); // YYY
+    private volatile StringList bup_shot_items = new StringList(); // YYY
+    private volatile StringList bup_flag_files = new StringList(), bup_data_files = new StringList(); // YYY
+    private StringList bup_tmp_sign_flag_files = new StringList(), bup_tmp_sign_data_files = new StringList(); // YYY
+    private volatile int bup_task_pos = -1, bup_shot_pos = -1; // YYY
+    private volatile long bup_expected_ofs = 0; // YYY
+    private volatile String bup_current_shot = "", bup_current_file = "", bup_current_file_real = "", bup_temp_fname = ""; // YYY
+    private volatile RandomAccessFile bup_raf = null; // YYY
+    private String bup_prev_seen_monthdir = ""; // YYY
+    private volatile String bup_sync_status_str = "Not started"; // YYY
+    private volatile String bup_sync_last_seen = ""; // YYY
+    private volatile String bup_last_seen_syn_shot = ""; // YYY
+    private volatile String bup_sync_status_time = (new Tum3Time()).AsString(); // YYY
+    private volatile String bup_sync_error_str = "", bup_sync_error_long = ""; // YYY
+    private volatile String bup_sync_error_time = ""; // YYY
+    private volatile String bup_last_shot_in_continuator = ""; // YYY
+    private volatile String bup_last_strange_shot = ""; // YYY
+    private volatile boolean bup_in_volatile; // YYY
+    private volatile boolean bup_syn_strange_count_finished = false; // YYY
+    private volatile long bup_sync_status_push = 0; // YYY
+    private volatile int bup_syn_strange_count = 0, bup_syn_strange_final = -1; // YYY
+    private volatile double bup_visible_rate = -1; // YYY
+    private volatile double[] bup_visible_rate_arr = {-1.0, -1.0, -1.0, -1.0};
+    private final Object bup_syn_strange_lock = new Object(); // YYY
+    private final Object bup_sync_status_lock = new Object(); // YYY
+
+    private final boolean BUP_SYN_ERASE_WIPES = false; // Note: tested OK, but make little sense for real life.
+
+    public static class BupTransferContinuator implements OutBuffContinuator {
+
+        protected final long myLength;
+        protected long writtenCount = 0;
+
+        private volatile RandomAccessFile myFF;
+        private String mySName, myFName;
+        //private boolean was_error = false;
+        //private String error_msg = "";
+        //private byte WasEdited = 0;
+        //private int user_count = 1;
+        private boolean block_close = false; // YYY
+        public final boolean is_volatile; // YYY
+
+
+        public BupTransferContinuator(boolean _is_volatile, String _shot_name, String _file_name, RandomAccessFile thisFF, long thisLength) {
+            is_volatile = _is_volatile;
+            myFF = thisFF;
+            myLength = thisLength;
+            mySName = _shot_name;
+            myFName = _file_name;
+        }
+
+        public String ShotName() {
+
+            return mySName;
+
+        }
+
+        public String FileName() {
+
+            return myFName;
+
+        }
+
+        public void EnsureOfs(long _seg_ofs) throws Exception {
+
+            if (_seg_ofs != writtenCount) throw new Exception("Segment offset mismatch between OutBuffContinuator and OutgoingBuff");
+
+        }
+
+        public boolean WithWarning() {
+
+            return false;
+
+        }
+
+        public long getPos() {
+
+            return writtenCount;
+
+        }
+
+        public void ForceXByte() {
+        }
+
+        public boolean PleaseWait() {
+
+            return false;
+
+        }
+
+        public boolean withTrailingStatus() {
+
+            return false;
+
+        }
+
+        private byte getTrailingByte() {
+
+            return 0;
+
+        }
+
+        public long getFullSizeX() {
+
+            return myLength;
+
+        }
+
+        public byte getEditedByte() {
+
+            return 0;
+
+        }
+
+        public int ReadTo(byte[] buff, int ofs, int count) throws Exception {
+
+            long tmp_count_l = myLength - writtenCount;
+            if (tmp_count_l > count) tmp_count_l = count;
+            if (tmp_count_l < 0)     tmp_count_l = 0;
+            int tmp_count = (int)tmp_count_l; // YYY
+            if (tmp_count > 0)
+                myFF.readFully(buff, ofs, tmp_count);
+            writtenCount += tmp_count;
+            //Tum3Logger.DoLog("BupTransferContinuator", true, " ReadTo(" + mySName + "," + myFName + "," + was_error + "," + ofs + "," + count + " = [tmp_count " + tmp_count + "] OK." );
+            return tmp_count;
+        }
+
+        public void ForceLock() {
+
+            block_close = true; // YYY
+
+        }
+
+        public void ForceRelease(boolean _and_close_now) throws Exception {
+
+            block_close = false; //user_count--; // YYY 
+            if (_and_close_now) close_Intnl(); // YYY
+
+        }
+
+        private void close_Intnl() throws Exception {
+
+            //Tum3Logger.DoLog("BupTransferContinuator", true, "[debug] close() for " + mySName + "," + myFName + "," + was_error);
+            //Tum3Logger.DoLog("BupTransferContinuator", true, "[debug] close() calltrace: " + Tum3Util.getStackTraceAuto());
+            //if (user_count > 0) return;
+
+            //System.out.println("[aq2j] DEBUG: <" + Thread.currentThread().getId() + "> TraceReaderContinuator.close(): myFF := null for '" + myFName + "'");
+            if (null != myFF) {
+                myFF.close();
+                myFF = null;
+            }
+        }
+
+        public void close() throws Exception {
+
+            if (!block_close) close_Intnl(); // YYY
+
+        }
+
+        public void AddUser() { }
+
+    }
 
 
     protected Tum3Db(int _db_idx, String _masterdb_name) {
@@ -84,6 +276,8 @@ public class Tum3Db implements Runnable, AppStopHook {
         db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
         isWriteable = Tum3cfg.isWriteable(db_index); // YYY
         downlink_enabled = Tum3cfg.getGlbInstance().getDbDownlinkEnabled(db_index); // YYY
+        downbulk_enabled = Tum3cfg.getGlbInstance().getDbDownBulkEnabled(db_index); // YYY
+        upbulk_enabled = Tum3cfg.getGlbInstance().getDbUpBulkEnabled(db_index); // YYY
         uplink_enabled = Tum3cfg.getGlbInstance().getDbUplinkEnabled(db_index); // YYY
         masterdb_name = _masterdb_name;
 
@@ -92,6 +286,8 @@ public class Tum3Db implements Runnable, AppStopHook {
         DB_ROOT_PATH = Tum3cfg.getParValue(db_index, false, Tum3cfg.TUM3_CFG_db_root);
         DB_ROOT_PATH_VOL = Tum3cfg.getParValue(db_index, false, TUM3_CFG_db_root_volatile);
         SYNC_STATE_PATH = Tum3cfg.getParValue(db_index, false, TUM3_CFG_sync_state_root); // YYY
+        writeprotect_storage = (0 != Tum3cfg.getIntValue(db_index, true, TUM3_CFG_writeprotect_storage, 0)); // YYY
+        enable_sync_raw = (0 != Tum3cfg.getIntValue(db_index, false, TUM3_CFG_enable_sync_raw, 0)); // YYY
 
         CONST_SHOTS_MAX_OPEN = Tum3cfg.getIntValue(db_index, true, TUM3_CFG_max_shots_open, CONST_SHOTS_MAX_OPEN);
         CONST_SHOTS_DISPOSE_AFTER = Tum3cfg.getIntValue(db_index, true, TUM3_CFG_unused_shot_close_delay, CONST_SHOTS_DISPOSE_AFTER);
@@ -127,6 +323,8 @@ public class Tum3Db implements Runnable, AppStopHook {
                     Tum3Logger.DoLog(db_name, false, "Enabled free space warning at " + warn_free_space_gb + " Gb.");
                 else
                     Tum3Logger.DoLog(db_name, false, "Note: no free space warning threshold was specified.");
+                //getPackedLastList();
+                //try { BupResetFrom("230419/15:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0;17:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0,0013=0,0021=0,0022=0"); } catch(Exception ignored) {}
             }
         }
     }
@@ -147,6 +345,7 @@ public class Tum3Db implements Runnable, AppStopHook {
             } catch (InterruptedException e) { }
             DisposeUnusedShots(false);
             if (!TerminateRequested) {
+                //System.gc(); Tum3Logger.DoLog(db_name, true, "rtFree " + (Runtime.getRuntime().freeMemory() >>> 10) + " kB/" + "rtTotal " + (Runtime.getRuntime().totalMemory() >>> 10) + " kB");
                 long curr_millis = System.currentTimeMillis();
                 if (curr_millis >= diag_next_update) {
                     UpdateThisServerInfo(curr_millis); // YYY
@@ -167,7 +366,16 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
-    private void LoadMasterList() {
+    private String YearExtend_Intl(String _short_year) throws Exception {
+
+         //if (_short_year.length() == 2) throw new Exception("YearExtend_Intl wrong argument <" + _short_year + ">");
+
+         if ('9' == _short_year.charAt(0)) return "19" + _short_year;
+         else                              return "20" + _short_year;
+
+    }
+
+    private void LoadMasterList() throws Exception {
 
         synchronized (MasterListLock) {
 
@@ -175,30 +383,14 @@ public class Tum3Db implements Runnable, AppStopHook {
 
             //System.out.println("[DEBUG] Creating masterlist in " + db_name);
             MasterList = new StringList();
-            StringList tmp_list = new StringList();
-
-            if (DB_ROOT_PATH.length() > 0) {
-                File dir = new File(DB_ROOT_PATH);
-                for (File file: dir.listFiles()) {
-                    if (file.isDirectory()) {
-                        String tmp_name = file.getName();
-                        if (Tum3Util.StrNumeric(tmp_name) && (4 == tmp_name.length())) {
-                            if ('9' == tmp_name.charAt(0)) tmp_name = "19" + tmp_name;
-                            else tmp_name = "20" + tmp_name;
-                            //System.out.println("[aq2j] DEBUG: subdir '" + tmp_name + "'");
-                            tmp_list.add(tmp_name);
-                        }
-                    }
-                }
-            }
+            StringList tmp_list = GetRawRootDir(); // new StringList(); // YYY
 
             if (null != master_db) {
                 //System.out.println("[DEBUG] Adding masterlist from " + master_db.db_name);
                 master_db.LoadMasterList();
                 for (int tmp_i=0; tmp_i < master_db.MasterList.size(); tmp_i++) {
                     String tmp_name = master_db.MasterList.get(tmp_i);
-                    if ('9' == tmp_name.charAt(0)) tmp_name = "19" + tmp_name;
-                    else tmp_name = "20" + tmp_name;
+                    tmp_name = YearExtend_Intl(tmp_name);
                     //System.out.println("[DEBUG] masterlist: " + tmp_name + " ?");
                     if (tmp_list.indexOf(tmp_name) < 0)
                         tmp_list.add(tmp_name);
@@ -365,7 +557,7 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
-    private StringList GetRawSubdir(String tmpSubdirName) {
+    private StringList GetRawSubdir(String tmpSubdirName, boolean _days_only) {
 
         StringList tmp_list = new StringList();
         if (DB_ROOT_PATH.length() > 0) {
@@ -383,8 +575,12 @@ public class Tum3Db implements Runnable, AppStopHook {
                     String tmp_name = file.getName();
                     //System.out.println("[aq2j] DEBUG: considering subdir '" + tmp_name + "'");
                     if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) {
-                        if (tmp_name.substring(0, 4).equals(tmpSubdirName) && Tum3Util.StrNumeric(tmp_name.substring(4, 6)))
-                            tmp_list.add(tmp_name.substring(4));
+                        if (tmp_name.substring(0, 4).equals(tmpSubdirName) && Tum3Util.StrNumeric(tmp_name.substring(4, 6))) {
+                            if (_days_only) { // YYY
+                                String tmp_st = tmp_name.substring(4, 6);
+                                if (!tmp_list.contains(tmp_st)) tmp_list.add(tmp_st);
+                            } else tmp_list.add(tmp_name.substring(4));
+                        }
                     }
                 }
             }
@@ -401,14 +597,14 @@ public class Tum3Db implements Runnable, AppStopHook {
         }
 
         String tmpSubdirName = MasterList.get(MasterIndex-1);
-        StringList tmp_list = GetRawSubdir(tmpSubdirName);
+        StringList tmp_list = GetRawSubdir(tmpSubdirName, false);
 
         if (null != master_db) {
             StringList tmp_master_sublist = null;
             synchronized (master_db.MasterListLock) {
                 int tmp_j = master_db.MasterList.indexOf(tmpSubdirName);
                 if (tmp_j >= 0)
-                    tmp_master_sublist = master_db.GetRawSubdir(tmpSubdirName);
+                    tmp_master_sublist = master_db.GetRawSubdir(tmpSubdirName, false);
             }
             if (null != tmp_master_sublist)
                 for (int tmp_i = 0; tmp_i < tmp_master_sublist.size(); tmp_i++) {
@@ -419,6 +615,979 @@ public class Tum3Db implements Runnable, AppStopHook {
         }
         Collections.sort(tmp_list);
         return tmp_list;
+    }
+
+    private String getFilesForDay(String tmpSubdirName, String tmpDay) {
+
+        StringList tmp_list = new StringList();
+        if (DB_ROOT_PATH.length() > 0) {
+            File dir = new File(DB_ROOT_PATH + tmpSubdirName + File.separator);
+            File tmp_files[] = dir.listFiles();
+//Tum3Util.SleepExactly(3000);
+            //System.out.println("[DEBUG] + tmpSubdirName=" + tmpSubdirName);
+            if (null == tmp_files) {
+                // Reminder: the directory is empty or non-existent at this time. Assume there are no files in it anyway.
+            } else for (File file: tmp_files) {
+                if (file.isDirectory()) {
+                    String tmp_name = file.getName();
+                    //System.out.println("[aq2j] DEBUG: considering subdir '" + tmp_name + "'");
+                    if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) {
+                        if (tmp_name.substring(0, 4).equals(tmpSubdirName) && tmp_name.substring(4, 6).equals(tmpDay)) {
+                            String tmp_st = tmp_name.substring(6);
+                            if (!tmp_list.contains(tmp_st)) tmp_list.add(tmp_st);
+                        }
+                    }
+                }
+            }
+        }
+
+        Collections.sort(tmp_list);
+        StringBuilder tmp_res = new StringBuilder();
+
+        for (String tmp_shot: tmp_list) {
+            String shotDir = DB_ROOT_PATH + tmpSubdirName + File.separator + tmpSubdirName + tmpDay + tmp_shot;
+            //System.out.println("[DEBUG] shotDir=" + shotDir);
+            File[] tmpFiles = listShotFiles_Intl(new File(shotDir)); // YYY
+            if (tmpFiles == null) continue;
+            StringList tmp_list2 = new StringList();
+            for (File file: tmpFiles) tmp_list2.add(file.getName());
+            Collections.sort(tmp_list2);
+
+            StringBuilder tmp_res2 = new StringBuilder();
+            String tmp_prev_idname = "";
+            String tmp_prev_extlist = "";
+            for (String tmp_sign_file: tmp_list2) {
+                String tmp_basename = tmp_sign_file.substring(0, tmp_sign_file.length()-4);
+                String tmp_ext = tmp_sign_file.charAt(tmp_sign_file.length()-2) + "";
+                //System.out.println("[aq2j] DEBUG tmp_sign_file='" + tmp_sign_file + "'... ");
+                if (tmp_basename.equals(tmp_prev_idname)) {
+                    tmp_prev_extlist = tmp_prev_extlist + '&' + tmp_ext;
+                } else {
+                    if (!tmp_prev_idname.isEmpty()) {
+                        if (tmp_res2.length() > 0) tmp_res2.append(",");
+                        tmp_res2.append(tmp_prev_idname + "=" + tmp_prev_extlist);
+                    }
+                    tmp_prev_idname = tmp_basename;
+                    tmp_prev_extlist = tmp_ext;
+                }
+            }
+            if (!tmp_prev_idname.isEmpty()) {
+                if (tmp_res2.length() > 0) tmp_res2.append(",");
+                tmp_res2.append(tmp_prev_idname + "=" + tmp_prev_extlist);
+            }
+            String tmp_shot_flist = tmp_res2.toString();
+            if (!tmp_shot_flist.isEmpty()) {
+                if (tmp_res.length() > 0) tmp_res.append(";");
+                tmp_res.append(tmp_shot + ":" + tmp_shot_flist);
+            }
+        }
+
+        if (tmp_res.length() > 0) {
+            String tmp_out = tmpSubdirName + tmpDay + "/" + tmp_res.toString();
+            //System.out.println("[aq2j] DEBUG tmp_out='" + tmp_out + "'");
+            return tmp_out;
+        }
+
+        return "";
+    }
+
+    private File[] listShotFiles_Intl(File dir) {
+
+        if (null == dir) return null;
+
+        return dir.listFiles(new FilenameFilter() {
+                @Override
+                public boolean accept(File dir, String name) {
+                    if (8 <= name.length())
+                        if ((name.charAt(name.length()-1) == '0') && (name.charAt(name.length()-3) == '0') && (name.charAt(name.length()-4) == '.'))
+                            if (Tum3Util.StrNumeric(name.substring(0, name.length()-4)))
+                                return true;
+                    return false;
+                }
+        });
+    }
+
+    private File[] listFlagFilesSyn_Intl(String path_part) {
+
+        File dir = new File(SYNC_STATE_PATH + path_part);
+        if (null == dir) return null;
+
+        return dir.listFiles(new FilenameFilter() {
+                @Override
+                public boolean accept(File dir, String name) {
+                    if (8 <= name.length())
+                        if ((name.charAt(name.length()-4) == '.') && (name.charAt(name.length()-3) == '8') && Tum3Util.StrNumeric(name.substring(name.length()-2)))
+                            if (Tum3Util.StrNumeric(name.substring(0, name.length()-4)))
+                                return true;
+                    return false;
+                }
+        });
+    }
+
+    private File[] listDataFilesSyn_Intl(String path_part) {
+
+        File dir = new File(DB_ROOT_PATH_VOL + path_part);
+        if (null == dir) return null;
+
+        return dir.listFiles(new FilenameFilter() {
+                @Override
+                public boolean accept(File dir, String name) {
+                    if (8 <= name.length())
+                        if (name.endsWith(Tum3Shot.FSUFF_NORMAL) || name.endsWith(Tum3Shot.FSUFF_BUP_GENERAL))
+                            if (Tum3Util.StrNumeric(name.substring(0, name.length()-4)))
+                                return true;
+                    return false;
+                }
+        });
+    }
+
+    private void PrepBupShot_Intl() {
+
+        bup_shot_items.clear();
+        bup_flag_files.clear();
+        bup_data_files.clear();
+        String tmp_full_num = bup_task_list.get(bup_task_pos);
+        String tmpSubdirName = tmp_full_num.substring(0, 4);
+        String tmpDay = tmp_full_num.substring(4, 6);
+        String tmp_shot = tmp_full_num.substring(6);
+        File[] tmpFiles;
+        if (bup_in_volatile) {
+            tmpFiles = listFlagFilesSyn_Intl(tmpSubdirName + File.separator + tmpSubdirName + tmpDay + tmp_shot);
+            if (null != tmpFiles) if (tmpFiles.length > 0) {
+                File[] tmpFiles2 = listDataFilesSyn_Intl(tmpSubdirName + File.separator + tmpSubdirName + tmpDay + tmp_shot);
+                if (null != tmpFiles2)
+                    for (File file: tmpFiles2) bup_data_files.add(file.getName());
+            }
+        } else {
+            String shotDir = DB_ROOT_PATH + tmpSubdirName + File.separator + tmpSubdirName + tmpDay + tmp_shot;
+            //Tum3Logger.DoLog(db_name, true, "[DEBUG] Comparing shotDir=" + shotDir + " (tmpDay=" + tmpDay + " tmp_shot=" + tmp_shot + ")");
+            tmpFiles = listShotFiles_Intl(new File(shotDir));
+        }
+        if (tmpFiles == null) return;
+        StringList tmp_ready_files = null;
+        if (!bup_in_volatile && !bup_start_subdir.isEmpty())
+            if (tmpSubdirName.equals(bup_start_subdir.substring(2)) && tmpDay.equals(bup_start_day)) tmp_ready_files = bup_start_done_list.get(tmp_shot);
+        //if (null == tmp_ready_files) Tum3Logger.DoLog(db_name, true, "[DEBUG] tmp_ready_files == null"); else Tum3Logger.DoLog(db_name, true, "[DEBUG] tmp_ready_files == " + tmp_ready_files);
+        for (File file: tmpFiles) {
+                String tmp_sign_file = file.getName();
+                if (bup_in_volatile) {
+                    bup_flag_files.add(tmp_sign_file);
+                    String tmp_sign_base = tmp_sign_file.substring(0, tmp_sign_file.length() - 4);
+                    if (bup_shot_items.indexOf(tmp_sign_base) < 0) bup_shot_items.add(tmp_sign_base);
+                } else {
+                    boolean tmp_is_ready = false;
+                    if (null != tmp_ready_files) if (tmp_ready_files.contains(tmp_sign_file)) tmp_is_ready = true;
+                    if (!tmp_is_ready) bup_shot_items.add(tmp_sign_file);
+                }
+        }
+        Collections.sort(bup_shot_items);
+    }
+
+    private String getLastDay(String tmpSubdirName) {
+
+        StringList tmp_list = GetRawSubdir(tmpSubdirName, true);
+
+        if (tmp_list.size() <= 0) return "";
+        Collections.sort(tmp_list);
+
+        String tmp_last_day = tmp_list.get(tmp_list.size() - 1);
+        String tmp_prev_day = "";
+        if (tmp_list.size() > 1) tmp_prev_day = tmp_list.get(tmp_list.size() - 2);
+        //System.out.println("[aq2j] DEBUG: tmp_last_day=<" + tmp_last_day + "> tmp_prev_day=<" + tmp_prev_day + ">");
+
+        String tmp_res = getFilesForDay(tmpSubdirName, tmp_last_day);
+        if (tmp_res.isEmpty() && !tmp_prev_day.isEmpty()) tmp_res = getFilesForDay(tmpSubdirName, tmp_prev_day);
+
+        return tmp_res;
+    }
+
+    private StringList GetRawRootDir() throws Exception {
+
+        return GetAnyRootDir(DB_ROOT_PATH);
+
+    }
+
+    private StringList GetAnyRootDir(String root_path) throws Exception {
+
+        StringList tmp_list = new StringList();
+
+        if (root_path.length() > 0) {
+            File dir = new File(root_path);
+            for (File file: dir.listFiles()) {
+                if (file.isDirectory()) {
+                    String tmp_name = file.getName();
+                    if (Tum3Util.StrNumeric(tmp_name) && (4 == tmp_name.length())) {
+                        tmp_name = YearExtend_Intl(tmp_name);
+                        tmp_list.add(tmp_name);
+                    }
+                }
+            }
+        }
+
+        return tmp_list;
+    }
+
+    public void setBupVisibleStatus(String new_status) {
+
+        setBupVisibleStatus(new_status, "", true);
+
+    }
+
+    public void setBupVisibleStatus(String new_status, String seen_shot_name, boolean is_summary_status) {
+
+        String tmp_time = (new Tum3Time()).AsString();
+        long tmp_millis = System.currentTimeMillis();
+        boolean tmp_do_push = is_summary_status; // Pushing in case text is identical might seem useless, but it is actually usefull because it shows time of status then.
+        synchronized(bup_sync_status_lock) {
+            if (!bup_in_volatile && !seen_shot_name.isEmpty()) bup_sync_last_seen = seen_shot_name;
+            if (!tmp_do_push) if (tmp_millis >= bup_sync_status_push) tmp_do_push = true;
+            if (tmp_do_push) bup_sync_status_push = tmp_millis + 1000 * CONST_SYNCINFO_PUSH_SEC;
+            bup_sync_status_time = tmp_time;
+            bup_sync_status_str = new_status + (is_summary_status && !bup_sync_last_seen.isEmpty() ? " [-->" + bup_sync_last_seen + "]" : ".") + " Bogus " + GetSynBogusCount(); // YYY
+        }
+        //if (tmp_do_push) Tum3Logger.DoLog(db_name, false, "[aq2j] DEBUG: setBupVisibleStatus(" + new_status + ") " + seen_shot_name);
+        if (tmp_do_push) Tum3Broadcaster.DistributeFlag(this);
+
+    }
+
+    public void setBupVisibleRate(double _rate_megabytes_per_sec) {
+
+        //bup_visible_rate = _rate_megabytes_per_sec;
+
+        int tmp_i, tmp_count = 0;
+        double tmp_d = 0.0;
+        for (tmp_i = 1; tmp_i < bup_visible_rate_arr.length; tmp_i++) bup_visible_rate_arr[tmp_i-1] = bup_visible_rate_arr[tmp_i];
+        bup_visible_rate_arr[bup_visible_rate_arr.length-1] = _rate_megabytes_per_sec;
+        for (tmp_i = 0; tmp_i < bup_visible_rate_arr.length; tmp_i++) if (bup_visible_rate_arr[tmp_i] >= 0) {
+            tmp_d += bup_visible_rate_arr[tmp_i];
+            tmp_count++;
+        }
+        if (tmp_count > 0) bup_visible_rate = tmp_d / tmp_count;
+        else               bup_visible_rate = -1.0;
+    }
+
+    public void setBupVisibleError(String error_descr_short, String error_descr_long) {
+
+        String tmp_time = (new Tum3Time()).AsString();
+        boolean tmp_do_push = false;
+        synchronized(bup_sync_status_lock) {
+            if (bup_sync_error_str.isEmpty()) {
+                bup_sync_error_time = tmp_time;
+                bup_sync_error_str = error_descr_short;
+                bup_sync_error_long = error_descr_long;
+                tmp_do_push = true;
+            }
+        }
+        if (tmp_do_push) Tum3Broadcaster.DistributeFlag(this);
+    }
+
+    public boolean BupErrorPresent() {
+
+        synchronized(bup_sync_status_lock) {
+            return !bup_sync_error_str.isEmpty();
+        }
+
+    }
+
+    public String getThisServerInfoSync() {
+
+        String tmp_str = "";
+        synchronized(bup_sync_status_lock) {
+            tmp_str = "sync_status_str=" + bup_sync_status_str + "\r\n" 
+                + "sync_status_time=" + bup_sync_status_time + "\r\n"
+                + "sync_last_seen=" + bup_sync_last_seen + "\r\n"
+                + "sync_error_str=" + bup_sync_error_str + "\r\n"
+                + "sync_error_time=" + bup_sync_error_time + "\r\n";
+        }
+        return tmp_str;
+    }
+
+    public void BupResetFrom(String _bup_string) throws Exception {
+
+        // 230419/15:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0;17:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0,0013=0,0021=0,0022=0
+        //System.out.println("[aq2j] DEBUG: tmp_body='" + tmp_body + "'");
+
+        //if (true) throw new Exception("Test exceptn 2");
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: _bup_string='" + _bup_string + "'");
+
+        if (BupErrorPresent()) return;
+
+        bup_visible_rate = -1.0;
+        bup_in_volatile = false;
+        bup_last_shot_in_continuator = "";
+        bup_prev_seen_monthdir = "";
+        bup_start_subdir = "";
+        bup_start_day = "";
+        bup_start_done_list.clear();
+        if (!_bup_string.isEmpty()) {
+            String tmpSubdirName = "", tmpDay = "";
+            if (_bup_string.length() < 7) {
+                setBupVisibleError("Unexpected uplink reply (a)", "Uplink listing not recognized (a)");
+                return;
+            }
+            if (_bup_string.charAt(6) != '/') {
+                setBupVisibleError("Unexpected uplink reply (b)", "Uplink listing not recognized (b)");
+                return;
+            }
+            tmpSubdirName = _bup_string.substring(0, 4);
+            tmpDay = _bup_string.substring(4, 6);
+            if (!Tum3Util.StrNumeric(tmpSubdirName) || !Tum3Util.StrNumeric(tmpDay)) {
+                setBupVisibleError("Unexpected uplink reply (c)", "Uplink listing not recognized (c)");
+                return;
+            }
+            bup_start_subdir = YearExtend_Intl(tmpSubdirName);
+            bup_start_day = tmpDay;
+            _bup_string = _bup_string.substring(7);
+            String[] tmp_shots = _bup_string.split(";");
+            for (String tmp_shot: tmp_shots) {
+                String[] tmp_num_and_flist = tmp_shot.split(":");
+                if (2 != tmp_num_and_flist.length) {
+                    setBupVisibleError("Unexpected uplink reply (d)", "Uplink listing not recognized (d)");
+                    return;
+                }
+                String tmp_num = tmp_num_and_flist[0];
+                String[] tmp_flist = tmp_num_and_flist[1].split(",");
+                //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: tmp_num=" + tmp_num);
+                StringList tmp_raw_files = new StringList();
+                for (String tmp_sig_name: tmp_flist) {
+                    String[] tmp_name_and_extlist = tmp_sig_name.split("=");
+                    if (2 != tmp_name_and_extlist.length) {
+                        setBupVisibleError("Unexpected uplink reply (e)", "Uplink listing not recognized (e)");
+                        return;
+                    }
+                    String tmp_base_name = tmp_name_and_extlist[0];
+                    if ((tmp_base_name.length() < 4) || !Tum3Util.StrNumeric(tmp_base_name)) {
+                        setBupVisibleError("Unexpected uplink reply (f)", "Uplink listing not recognized (f)");
+                        return;
+                    }
+                    String[] tmp_exts = tmp_name_and_extlist[1].split("&");
+                    for (String tmp_one_ext: tmp_exts)
+                        tmp_raw_files.add(tmp_base_name + ".0" + tmp_one_ext + "0");
+                }
+                if (tmp_raw_files.size() > 0) bup_start_done_list.put(tmp_num, tmp_raw_files);
+            }
+        }
+
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_sync_error_long=<" + bup_sync_error_long + "> bup_start_subdir=<" + bup_start_subdir + "> bup_start_day=<" + bup_start_day + "> bup_start_done_list='" + bup_start_done_list + "'");
+
+        StringList tmp_list = GetRawRootDir();
+        StringList tmp_shot_list = new StringList();
+        Collections.sort(tmp_list);
+
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_start_subdir='" + bup_start_subdir + "' bup_start_day='" + bup_start_day + "'");
+        for (int tmp_i = 0; tmp_i < tmp_list.size(); tmp_i++) if (bup_start_subdir.isEmpty() || (bup_start_subdir.compareTo(tmp_list.get(tmp_i)) <= 0)) {
+
+            String tmpSubdirName = tmp_list.get(tmp_i).substring(2);
+            File dir = new File(DB_ROOT_PATH + tmpSubdirName + File.separator);
+            File tmp_files[] = dir.listFiles();
+            if (null != tmp_files) for (File file: tmp_files) {
+                if (file.isDirectory()) {
+                    String tmp_name = file.getName();
+                    if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) if (tmp_name.substring(0, 4).equals(tmpSubdirName)) {
+                        boolean tmp_take_it = false;
+                        if (bup_start_day.isEmpty() || bup_start_subdir.isEmpty()) tmp_take_it = true;
+                        if (!tmp_take_it) if (!bup_start_subdir.equals(tmp_list.get(tmp_i))) tmp_take_it = true;
+                        if (!tmp_take_it) if (bup_start_subdir.equals(tmp_list.get(tmp_i)) && (bup_start_day.compareTo(tmp_name.substring(4, 6)) <= 0)) tmp_take_it = true;
+                        if (tmp_take_it) tmp_shot_list.add(YearExtend_Intl(tmp_name));
+                        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: tmp_name='" + tmp_name + "' tmp_take_it='" + tmp_take_it + "'");
+                    }
+                }
+            }
+            if (tmp_shot_list.size() >= CONST_SYNC_SHOTS_ONCE_LIMIT) break;
+        }
+        Collections.sort(tmp_shot_list);
+
+        bup_task_list.clear();
+        bup_task_pos = -1;
+        for (int tmp_i = 0; (tmp_i < tmp_shot_list.size()) && (bup_task_list.size() < CONST_SYNC_SHOTS_ONCE_LIMIT); tmp_i++)
+            bup_task_list.add(tmp_shot_list.get(tmp_i).substring(2));
+
+        if (bup_task_list.size() > 0) Tum3Logger.DoLog(db_name, false, "Backup sync: found " + bup_task_list.size() + " new raw shots."); // YYY
+
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: non-volatile bup_task_list='" + bup_task_list + "'");
+
+        BupTryNextTask_Intl();
+        //if ((bup_task_pos >= 0) && (bup_task_pos < bup_task_list.size())) if (bup_shot_items.size() > 0) Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_task_pos=" + bup_task_pos + " shot=" + bup_task_list.get(bup_task_pos) + ", bup_shot_items='" + bup_shot_items + "'");
+        BupCloseCurrent(false);
+
+    }
+
+    public void BupResetSyn() {
+
+        synchronized(bup_syn_strange_lock) {
+            if (bup_syn_strange_count_finished) bup_syn_strange_final = bup_syn_strange_count;
+            bup_syn_strange_count = 0;
+            bup_syn_strange_count_finished = false;
+        }
+        bup_last_seen_syn_shot = "";
+        bup_last_strange_shot = ""; // YYY
+
+        bup_visible_rate = -1.0;
+    }
+
+    public boolean BupContinueFromSyn() throws Exception {
+
+        if ((SYNC_STATE_PATH.length() <= 0) || !VolatilePathPresent()) return false;
+
+        if (BupErrorPresent()) return false;
+
+        bup_in_volatile = true;
+        bup_last_shot_in_continuator = "";
+        bup_start_subdir = "";
+        bup_start_day = "";
+        String bup_start_nn = "";
+        bup_start_done_list.clear();
+        if (!bup_last_seen_syn_shot.isEmpty()) {
+            bup_start_subdir = YearExtend_Intl(bup_last_seen_syn_shot.substring(0, 4));
+            bup_start_day = bup_last_seen_syn_shot.substring(4, 6);
+            bup_start_nn = bup_last_seen_syn_shot.substring(6);
+        }
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_last_seen_syn_shot='" + bup_last_seen_syn_shot + "'");
+
+        StringList tmp_list = GetAnyRootDir(SYNC_STATE_PATH);
+        StringList tmp_shot_list = new StringList();
+        Collections.sort(tmp_list);
+
+        for (int tmp_i = 0; tmp_i < tmp_list.size(); tmp_i++) if (bup_start_subdir.isEmpty() || (bup_start_subdir.compareTo(tmp_list.get(tmp_i)) <= 0)) {
+
+            String tmpSubdirName = tmp_list.get(tmp_i).substring(2);
+            File dir = new File(SYNC_STATE_PATH + tmpSubdirName + File.separator);
+            File tmp_files[] = dir.listFiles();
+            if (null != tmp_files) for (File file: tmp_files) {
+                if (file.isDirectory()) {
+                    String tmp_name = file.getName();
+                    if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) if (tmp_name.substring(0, 4).equals(tmpSubdirName)) {
+                        boolean tmp_take_it = bup_last_seen_syn_shot.isEmpty() || (bup_last_seen_syn_shot.compareTo(tmp_name) < 0);
+                        if (tmp_take_it) tmp_shot_list.add(YearExtend_Intl(tmp_name));
+                    }
+                }
+            }
+            if (tmp_shot_list.size() >= CONST_SYNC_SHOTS_ONCE_LIMIT) break;
+        }
+        Collections.sort(tmp_shot_list);
+
+        bup_task_list.clear();
+        bup_task_pos = -1;
+        for (int tmp_i = 0; (tmp_i < tmp_shot_list.size()) && (bup_task_list.size() < CONST_SYNC_SHOTS_ONCE_LIMIT); tmp_i++)
+            bup_task_list.add(tmp_shot_list.get(tmp_i).substring(2));
+
+        if (bup_task_list.size() > 0) Tum3Logger.DoLog(db_name, false, "Backup sync: found " + bup_task_list.size() + " updated shots in volatile."); // YYY
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: volatile bup_task_list='" + bup_task_list + "'");
+
+        BupTryNextTask_Intl();
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_task_list.size()=" + bup_task_list.size());
+        //if (bup_task_list.size() > 0) Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_task_list = (" + bup_task_list.get(0) + " - " + bup_task_list.get(bup_task_list.size()-1) + ")");
+        BupCloseCurrent(false);
+
+        if (bup_task_list.size() <= 0) bup_syn_strange_count_finished = true;
+
+        return bup_task_list.size() > 0;
+    }
+
+    private void BupTryNextTask_Intl() {
+
+        bup_shot_pos = 0;
+        while (bup_task_pos < bup_task_list.size()) {
+            bup_task_pos++;
+            if (bup_task_pos < bup_task_list.size()) {
+                PrepBupShot_Intl();
+                if ((bup_shot_items.size() > 0) || bup_in_volatile) break; // YYY
+            }
+        }
+    }
+
+    public long AcceptBupPortion(boolean _is_volatile, String _shot_name, String _file_name, long _full_size, long _seg_offset, byte[] _body, int _ofs, int _len) throws Exception {
+
+        long tmp_result = -1;
+
+        //if (true) throw new Exception("Test exceptn 5");
+        bup_in_volatile = _is_volatile; // YYY
+        if (!_shot_name.equals(bup_current_shot) || !_file_name.equals(bup_current_file)) {
+            //Tum3Logger.DoLog(db_name, true, "[aq2j] AcceptBupPortion: new _shot_name=" + _shot_name + " _file_name=" + _file_name);
+            if (null != bup_raf) throw new Exception("AcceptBupPortion: unexpected file change");
+            BupCloseCurrent(false);
+            bup_current_shot = _shot_name;
+            bup_current_file = _file_name;
+        }
+        if (bup_expected_ofs != _seg_offset) throw new Exception("AcceptBupPortion: unexpected offset " + _seg_offset);
+
+        if (null == bup_raf) {
+            boolean tmp_fname_ok = false;
+            if (_is_volatile) tmp_fname_ok = Tum3Util.StrNumeric(bup_current_file) && (bup_current_file.length() >= 3) && (bup_current_file.length() <= 5);
+            else {
+            if (bup_current_file.length() >= 5)
+                if  ((bup_current_file.charAt(bup_current_file.length()-4) == '.')
+                  && (bup_current_file.charAt(bup_current_file.length()-3) == '0')
+                  && (bup_current_file.charAt(bup_current_file.length()-1) == '0'))
+                    tmp_fname_ok = true;
+            }
+            if (!tmp_fname_ok) throw new Exception("AcceptBupPortion: unexpected filename <" + bup_current_file + ">");
+            bup_current_file_real = _is_volatile? bup_current_file + Tum3Shot.FSUFF_NORMAL : bup_current_file; // YYY
+            String tmpActualPath = _is_volatile? DB_ROOT_PATH_VOL : DB_ROOT_PATH; // YYY
+            String shotSubdir = bup_current_shot.substring(0, 4);
+            if (0 == _full_size) {
+                if (!_is_volatile) throw new Exception("AcceptBupPortion: unexpected 0 size for filename <" + bup_current_file_real + ">");
+                File tmp_file_prev = new File(DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file + Tum3Shot.FSUFF_BUP_GENERAL); // YYY
+                File tmp_file_erased = new File(DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file + Tum3Shot.FSUFF_BUP_ERASED); // YYY
+                File tmp_dest_file = new File(DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real); // YYY
+                tmp_file_prev.delete();
+                if (tmp_file_prev.exists()) throw new Exception("Volatile sync error: <" + DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file + Tum3Shot.FSUFF_BUP_GENERAL + "> could not be deleted.");
+                if (tmp_file_erased.exists() && tmp_dest_file.exists()) tmp_file_erased.delete();
+                tmp_dest_file.renameTo(tmp_file_erased);
+                tmp_dest_file = new File(DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real); // YYY
+                if (tmp_dest_file.exists()) throw new Exception("Volatile sync error: <" + DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real + "> could not be deleted.");
+                if (BUP_SYN_ERASE_WIPES) { // YYY
+                    tmp_file_erased.delete(); // YYY
+                    // Try to also delete dir path if possible.
+                    (new File(DB_ROOT_PATH_VOL + shotSubdir + File.separator + bup_current_shot)).delete();
+                    (new File(DB_ROOT_PATH_VOL + shotSubdir)).delete();
+                }
+            } else {
+                StringBuilder tmp_temp_fname = new StringBuilder(bup_current_file_real);
+                tmp_temp_fname.setCharAt(bup_current_file_real.length()-3, '3'); // YYY
+                bup_temp_fname = tmp_temp_fname.toString();
+                String tmp_full_path = tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_temp_fname;
+                //Tum3Logger.DoLog(db_name, true, "[aq2j] AcceptBupPortion: opening tmp_full_path=" + tmp_full_path);
+
+                File tmp_monthdir = new File(tmpActualPath + shotSubdir);
+                if (!tmp_monthdir.exists()) tmp_monthdir.mkdir();
+                if (!bup_prev_seen_monthdir.equals(shotSubdir)) {
+                    bup_prev_seen_monthdir = shotSubdir;
+                    AppendMonthToMasterList(shotSubdir, false);
+                }
+                File tmp_shotdir = new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot);
+                if (!tmp_shotdir.exists()) tmp_shotdir.mkdir();
+
+                if (!_is_volatile) if (new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real).exists())
+                    throw new Exception("Internal sync error: <" + bup_current_shot + File.separator + bup_current_file_real + "> already exists.");
+                bup_raf = new RandomAccessFile(tmp_full_path, "rw");
+            }
+        }
+
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] AcceptBupPortion: writing _shot_name=" + _shot_name + " _file_name=" + _file_name + " _seg_offset=" + _seg_offset + " _ofs=" + _ofs + " _len=" + _len);
+        if (_len > 0) bup_raf.write(_body, _ofs, _len);
+        //Tum3Logger.DoLog(db_name, true, "[aq2j] AcceptBupPortion: wrote _shot_name=" + _shot_name + " _file_name=" + _file_name + " _seg_offset=" + _seg_offset + " _ofs=" + _ofs + " _len=" + _len);
+        bup_expected_ofs += _len;
+        tmp_result = bup_expected_ofs;
+        if (bup_expected_ofs >= _full_size) {
+            //Tum3Logger.DoLog(db_name, true, "[aq2j] AcceptBupPortion: file done. _shot_name=" + _shot_name + " _file_name=" + _file_name + " total_size=" + bup_expected_ofs);
+            BupCloseCurrent(true);
+        }
+        return tmp_result;
+    }
+
+    private void BupCloseCurrent(boolean _with_success) throws Exception {
+
+        if (null != bup_raf) {
+            if (_with_success) bup_raf.setLength(bup_expected_ofs);
+            bup_raf.close();
+            bup_raf = null;
+            if (_with_success) {
+                String shotSubdir = bup_current_shot.substring(0, 4);
+                String tmpActualPath = bup_in_volatile ? DB_ROOT_PATH_VOL : DB_ROOT_PATH; // YYY
+                File tmp_dest_file = new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real); // YYY
+                if (bup_in_volatile) {
+                    File tmp_file_prev = new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file + Tum3Shot.FSUFF_BUP_GENERAL); // YYY
+                    if (tmp_file_prev.exists() && tmp_dest_file.exists()) tmp_file_prev.delete();
+                    tmp_dest_file.renameTo(tmp_file_prev);
+                    tmp_dest_file = new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real); // YYY
+                    if (tmp_dest_file.exists()) throw new Exception("BupCloseCurrent: deleting previous " + bup_current_file_real + " failed.");
+                }
+                boolean tmp_ok = (new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_temp_fname))
+                        .renameTo(tmp_dest_file);
+                if (!tmp_ok) throw new Exception("BupCloseCurrent: renaming " + bup_temp_fname + " to " + bup_current_file_real + " failed.");
+                if (writeprotect_storage && !bup_in_volatile) if (!tmp_dest_file.setWritable(false)) throw new Exception("BupCloseCurrent: setting R/O " + bup_current_file_real + " failed.");
+            }
+        }
+        bup_current_shot = "";
+        bup_current_file = "";
+        bup_temp_fname = "";
+        bup_expected_ofs = 0;
+    }
+
+    public void BupStop() {
+
+        if (null != bup_raf)
+            try { BupCloseCurrent(false); }
+            catch (Exception e) {
+                Tum3Logger.DoLog(db_name, true, "Exception in BupCloseCurrent(): " + Tum3Util.getStackTrace(e));
+                setBupVisibleError("Failure in BupCloseCurrent", "Failure in BupCloseCurrent: " + e.toString());
+            }
+    }
+
+    public void BupVolFileSuccess(String _shot_name, String _file_name, boolean _erasure) throws Exception {
+
+        SyncStatusVolSendEnd(_shot_name.substring(0, 4), _shot_name, _file_name, _erasure ? SYNF_ERASE : SYNF_ADD); // YYY
+
+    }
+
+
+    private void FindInFiles(StringList full_list, String base_name, StringList found_list) {
+
+        found_list.clear();
+        for (String tmp_st: full_list) if (tmp_st.startsWith(base_name)) found_list.add(tmp_st.substring(base_name.length()-1));
+
+    }
+
+    public final static String SignalFName(int thisSignalId) {
+        StringBuffer tmp_st = new StringBuffer();
+        tmp_st.append("" + thisSignalId);
+        while (tmp_st.length() < 4) tmp_st.insert(0, '0');
+        return tmp_st.toString();
+    }
+
+    private void SetFileMTime(File tmp_new_file2) throws Exception {
+
+        // Ensure flag-file's mtime is approximately current, so that later cleanup process could make a guess about how old is any remaining garbage, if any.
+        long tmp_current_millis = System.currentTimeMillis();
+        long tmp_last_mod_prev = tmp_new_file2.lastModified();
+        if (tmp_last_mod_prev <= 0) throw new Exception("lastModified() failed");
+        if ((tmp_current_millis - tmp_last_mod_prev) >= ((long)60000 * MIN_SYNDIR_CLEANUP_MINUTES)) {
+            try {
+                Files.setLastModifiedTime(tmp_new_file2.toPath(), FileTime.fromMillis(tmp_current_millis)); // YYY
+            } catch (Exception ignored) {
+                RandomAccessFile tmp_raf = null;
+                try {
+                    tmp_raf = new RandomAccessFile(tmp_new_file2, "rw");
+                    tmp_raf.write(0);
+                    tmp_raf.setLength(0);
+                } finally {
+                    if (null != tmp_raf) {
+                        tmp_raf.close();
+                        tmp_raf = null;
+                    }
+                }
+            }
+        }
+
+    }
+
+    public int GetSynBogusCount() {
+
+        int tmp_curr, tmp_final;
+        synchronized(bup_syn_strange_lock) {
+            tmp_curr = bup_syn_strange_count;
+            tmp_final = bup_syn_strange_final;
+        }
+        if (tmp_final < 0) return tmp_curr;
+        else {
+            if (tmp_curr > tmp_final) return tmp_curr;
+            else return tmp_final;
+        }
+
+    }
+
+    public BupTransferContinuator BupNextToSend() throws Exception {
+
+        //if (true) throw new Exception("Test exceptn 3");
+        BupTransferContinuator tmp_result = null;
+        boolean tmp_found_some = false;
+
+        while (!tmp_found_some && (bup_task_pos < bup_task_list.size()) && (bup_task_pos >= 0)) {
+            String shotName = bup_task_list.get(bup_task_pos);
+            String shotSubdir = shotName.substring(0, 4);
+            if (bup_shot_items.size() > 0) {
+                String fileName = bup_shot_items.get(bup_shot_pos);
+                if (!bup_last_shot_in_continuator.equals(shotName)) {
+                    bup_last_shot_in_continuator = shotName;
+                    String tmp_job_size = "" + bup_task_list.size();
+                    String tmp_last_in_job = bup_task_list.get(bup_task_list.size()-1);
+                    if (bup_task_list.size() >= CONST_SYNC_SHOTS_ONCE_LIMIT) tmp_job_size = tmp_job_size + "+";
+                    double tmp_rate = bup_visible_rate;
+                    String tmp_rate_str = tmp_rate < 0 ? "? MB/s" : String.format("%.1f MB/s", tmp_rate); // YYY
+                    setBupVisibleStatus((bup_in_volatile ? "Vol " : "Raw ") + (bup_task_pos + 1) + "/" + tmp_job_size + " [" + shotName + " --> " + tmp_last_in_job + "] " + tmp_rate_str, shotName, false);
+                }
+                if (bup_in_volatile) {
+                    bup_last_seen_syn_shot = shotName;
+                    FindInFiles(bup_flag_files, fileName + ".", bup_tmp_sign_flag_files);
+                    FindInFiles(bup_data_files, fileName + ".", bup_tmp_sign_data_files);
+                    boolean tmp_flag_to_upd = bup_tmp_sign_flag_files.contains(FSUFF_FLAGDONE) || bup_tmp_sign_flag_files.contains(FSUFF_FLAGSYNCING);
+                    boolean tmp_flag_to_era = bup_tmp_sign_flag_files.contains(FSUFF_FLAGDONE_ERA) || bup_tmp_sign_flag_files.contains(FSUFF_FLAGSYNCING_ERA);
+                    boolean tmp_prep_upd = bup_tmp_sign_flag_files.contains(FSUFF_FLAGPREP);
+                    boolean tmp_prep_era = bup_tmp_sign_flag_files.contains(FSUFF_FLAGPREP_ERA);
+                    boolean tmp_stall_upd = bup_tmp_sign_flag_files.contains(FSUFF_FLAGSTALL);
+                    boolean tmp_stall_era = bup_tmp_sign_flag_files.contains(FSUFF_FLAGSTALL_ERA);
+                    boolean tmp_data_exists = bup_tmp_sign_data_files.contains(Tum3Shot.FSUFF_NORMAL) || bup_tmp_sign_data_files.contains(Tum3Shot.FSUFF_BUP_GENERAL);
+                    //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: shot=" + shotName + ", sign=" + fileName + ": bup_tmp_sign_flag_files='" + bup_tmp_sign_flag_files + "', bup_tmp_sign_data_files='" + bup_tmp_sign_data_files + "', tmp_flag_to_upd=" + tmp_flag_to_upd + " tmp_flag_to_era=" + tmp_flag_to_era + " tmp_data_exists=" + tmp_data_exists);
+                    boolean tmp_can_erase = tmp_flag_to_era && !tmp_flag_to_upd && !tmp_data_exists;
+                    boolean tmp_can_update = tmp_flag_to_upd && tmp_data_exists;
+                    if (tmp_stall_upd || tmp_prep_upd) SyncStatusVolCleanup(shotSubdir, shotName, fileName, SYNF_ADD,   tmp_stall_upd, tmp_prep_upd); // YYY
+                    if (tmp_stall_era || tmp_prep_era) SyncStatusVolCleanup(shotSubdir, shotName, fileName, SYNF_ERASE, tmp_stall_era, tmp_prep_era); // YYY
+                    if (tmp_can_update) {
+                        SyncStatusVolSendBegin(shotSubdir, shotName, fileName, SYNF_ADD);
+
+                        String tmpActualPath = DB_ROOT_PATH_VOL;
+                        String tmp_full_path = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + fileName;
+                        boolean tmp_open_ok = false;
+                        RandomAccessFile raf = null;
+
+                        for (int tmp_attempt = 1; tmp_attempt <= 4; tmp_attempt++) {
+                            String Fext;
+                            if ((tmp_attempt & 1) == 1) Fext = Tum3Shot.FSUFF_NORMAL;
+                            else                        Fext = Tum3Shot.FSUFF_BUP_GENERAL;
+                            try {
+                                raf = new RandomAccessFile(tmp_full_path + Fext, "r");
+                                //System.out.println("[aq2j] DEBUG: File '" + Fname + "' opened(r).");
+                                tmp_open_ok = true;
+                                break;
+                            } catch (Exception e) {
+                                if (((tmp_attempt & 1) == 1) && !(e instanceof FileNotFoundException)) // YYY
+                                    throw e; // Note. The loop is supposed to only catch a renamed file, not any sorts of errors with it.
+                            }
+                        }
+                        if (tmp_open_ok) {
+                            tmp_result = new BupTransferContinuator(true, shotName, fileName, raf, raf.length());
+                            tmp_found_some = true;
+                        } else IncrementStrange(shotName);
+                    } else if (tmp_can_erase) {
+                        SyncStatusVolSendBegin(shotSubdir, shotName, fileName, SYNF_ERASE);
+                        tmp_result = new BupTransferContinuator(true, shotName, fileName, null, 0);
+                        tmp_found_some = true;
+                    } else {
+                        //if (tmp_flag_to_upd || tmp_flag_to_era) // Is it actually needed?
+                            IncrementStrange(shotName);
+                    }
+                } else {
+                    String tmpActualPath = DB_ROOT_PATH;
+                    String tmp_full_path = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + fileName;
+                    RandomAccessFile raf = new RandomAccessFile(tmp_full_path, "r");
+                    tmp_result = new BupTransferContinuator(false, shotName, fileName, raf, raf.length());
+                    tmp_found_some = true;
+                }
+            }
+            bup_shot_pos++;
+            if (bup_shot_pos >= bup_shot_items.size()) BupTryNextTask_Intl();
+            if (!tmp_found_some) TryToCleanupDirs(shotSubdir, shotName); // YYY
+        }
+
+        return tmp_result;
+    }
+
+
+    private void IncrementStrange(String shotName) {
+
+        if (!bup_last_strange_shot.equals(shotName)) {
+            bup_last_strange_shot = shotName;
+            if (bup_syn_strange_count < Integer.MAX_VALUE) bup_syn_strange_count++;
+        }
+    }
+
+    private void TryToCleanupDirs(String shotSubdir, String shotName) {
+
+        if (0 == bup_shot_pos) {
+            (new File(SYNC_STATE_PATH + shotSubdir + File.separator + shotName)).delete();
+            //Tum3Logger.DoLog(db_name, false, "[DEBUG] Tried to delete dir: <" + SYNC_STATE_PATH + shotSubdir + File.separator + shotName + ">");
+            boolean tmp_also_monthdir = (bup_task_pos >= bup_task_list.size()) || (bup_task_pos < 0);
+            if (!tmp_also_monthdir) {
+                String tmp_next_subdirName = bup_task_list.get(bup_task_pos).substring(0, 4);
+                tmp_also_monthdir = !shotSubdir.equals(tmp_next_subdirName);
+            }
+            // If monthdir will change, also try to remove monthdir.
+            if (tmp_also_monthdir) {
+                (new File(SYNC_STATE_PATH + shotSubdir)).delete();
+                //Tum3Logger.DoLog(db_name, false, "[DEBUG] Tried to delete dir: <" + SYNC_STATE_PATH + shotSubdir + ">");
+            }
+        }
+    }
+
+    public void SyncStatusVolSendBegin(String shotSubdir, String shotName, String _file_base, int _op_type) throws Exception {
+
+        int tmp_other_type = 1 - _op_type;
+        String tmp_fsuff_done    = SYNC_SUFF[_op_type][SYNF_DONE];
+        String tmp_fsuff_syncing = SYNC_SUFF[_op_type][SYNF_SYNCING];
+        String tmp_fsuff_done_other = SYNC_SUFF[tmp_other_type][SYNF_DONE];
+        String tmp_fsuff_syncing_other = SYNC_SUFF[tmp_other_type][SYNF_SYNCING];
+
+        String tmp_cmn_part = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + _file_base;
+        String tmp_new_fname1 = tmp_cmn_part + tmp_fsuff_done;
+        String tmp_new_fname2 = tmp_cmn_part + tmp_fsuff_syncing;
+        String tmp_new_fname3 = tmp_cmn_part + tmp_fsuff_done_other;
+        String tmp_new_fname4 = tmp_cmn_part + tmp_fsuff_syncing_other;
+        File tmp_new_file1 = new File(tmp_new_fname1);
+        File tmp_new_file2 = new File(tmp_new_fname2);
+        File tmp_new_file3 = new File(tmp_new_fname3);
+        File tmp_new_file4 = new File(tmp_new_fname4);
+
+        if (tmp_new_file1.exists()) tmp_new_file2.delete();
+        tmp_new_file1.renameTo(tmp_new_file2);
+        if (tmp_new_file1.exists() || !tmp_new_file2.exists()) throw new Exception("Failed to rename sync flag file <" + tmp_new_fname1 + "> to <" + tmp_new_fname2 + ">");
+
+        if (tmp_new_file3.exists()) tmp_new_file4.delete();
+        tmp_new_file3.renameTo(tmp_new_file4);
+        tmp_new_file4.delete();
+        if (tmp_new_file3.exists() || tmp_new_file4.exists()) throw new Exception("Failed to remove sync flag files <" + tmp_new_fname3 + "> or <" + tmp_new_fname4 + ">");
+
+    }
+
+    public void SyncStatusVolSendEnd(String shotSubdir, String shotName, String _file_base, int _op_type) throws Exception {
+
+        String tmp_fsuff_syncing = SYNC_SUFF[_op_type][SYNF_SYNCING];
+        String tmp_cmn_part = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + _file_base;
+        String tmp_new_fname2 = tmp_cmn_part + tmp_fsuff_syncing;
+        File tmp_new_file2 = new File(tmp_new_fname2);
+
+        tmp_new_file2.delete();
+        tmp_new_file2 = new File(tmp_new_fname2);
+        if (tmp_new_file2.exists()) throw new Exception("Failed to remove sync flag file <" + tmp_new_fname2 + ">");
+
+        // Try to also remove empty directories, but only at the end of files for specific shot.
+        TryToCleanupDirs(shotSubdir, shotName);
+
+    }
+
+    private void SyncStatusVolCleanup(String shotSubdir, String shotName, String _file_base, int _op_type, boolean _seen_stall, boolean _seen_prep) throws Exception {
+
+        if (!withSyncState) return;
+
+        String tmp_fsuff_prep = SYNC_SUFF[_op_type][SYNF_PREP];
+        String tmp_fsuff_done = SYNC_SUFF[_op_type][SYNF_DONE];
+        String tmp_fsuff_stall = SYNC_SUFF[_op_type][SYNF_STALL];
+        String tmp_prep_fname = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + _file_base + tmp_fsuff_prep;
+        String tmp_stall_fname = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + _file_base + tmp_fsuff_stall;
+        String tmp_ready_fname = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + _file_base + tmp_fsuff_done; // YYY
+        File tmp_prep_file = new File(tmp_prep_fname);
+        File tmp_stall_file = new File(tmp_stall_fname);
+        File tmp_ready_file = new File(tmp_ready_fname);
+
+        if (_seen_stall) {
+                // Note: at this point stall file might or might not exist.
+                tmp_stall_file.renameTo(tmp_ready_file);
+                // Note: at this point stall file might or might not exist.
+                tmp_stall_file.delete();
+        }
+
+        if (_seen_prep) {
+            long tmp_last_mod_prev = tmp_prep_file.lastModified();
+            if (tmp_last_mod_prev >= 0)
+                if ((System.currentTimeMillis() - tmp_last_mod_prev) >= ((long)60000 * DAY_SYNDIR_CLEANUP_MINUTES)) {
+                    tmp_prep_file.renameTo(tmp_stall_file);
+                }
+        }
+    }
+
+    public void SyncStatusVolOpBegin(String shotSubdir, String shotName, int _ID, int _op_type) throws Exception {
+    // Reminder! If it cannot do the thing then it MUST throw!
+    // Reminder2! Concurrent calls for the same (shot+id) are strictly 
+    //   prevented with external locking, however need to consider that some 
+    //   previous operation could be unexpectedly interrupted at any stage.
+
+        if (!withSyncState) return;
+
+        String tmp_fsuff_prep = SYNC_SUFF[_op_type][SYNF_PREP]; // FSUFF_FLAGPREP; // YYY
+        String tmp_fsuff_done = SYNC_SUFF[_op_type][SYNF_DONE]; // YYY
+        String tmp_fsuff_stall = SYNC_SUFF[_op_type][SYNF_STALL];
+        File tmp_monthdir    = new File(SYNC_STATE_PATH + shotSubdir);
+        File tmp_shotdir     = new File(SYNC_STATE_PATH + shotSubdir + File.separator + shotName);
+        String tmp_prep_fname = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID) + tmp_fsuff_prep;
+        String tmp_ready_fname = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID) + tmp_fsuff_done; // YYY
+        String tmp_stall_fname = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID) + tmp_fsuff_stall; // YYY
+        File tmp_prep_file = new File(tmp_prep_fname);
+        File tmp_ready_file = new File(tmp_ready_fname); // YYY
+        File tmp_stall_file = new File(tmp_stall_fname); // YYY
+
+        boolean tmp_ok = false;
+        for (int attempt = 0; (attempt < 3) && !tmp_ok; attempt++) {
+            try {
+                tmp_monthdir.mkdir();
+                tmp_shotdir.mkdir();
+
+                tmp_prep_file.renameTo(tmp_ready_file); // YYY
+                tmp_prep_file.delete(); // YYY
+                tmp_stall_file.renameTo(tmp_ready_file); // YYY
+                tmp_stall_file.delete(); // YYY
+
+                tmp_prep_file.createNewFile(); 
+                // There is a race with SyncStatusVolCleanup(), but it only happens 
+                // once in at least BUP_IDLE_CHECK_SECONDS, so multiple checks 
+                // using tmp_stall_file.exists() should do the trick (hopefully).
+
+                if (tmp_prep_file.exists() && !tmp_stall_file.exists()) tmp_ok = true; // YYY
+
+            } catch (Exception ignored) {}
+        }
+        if (!tmp_ok) throw new Exception("Failed to create sync flag file <" + tmp_prep_fname + "> or cleanup respective stall flag file");
+
+        //SetFileMTime(tmp_prep_file);
+    }
+
+    public void SyncStatusVolOpEnd(String shotSubdir, String shotName, int _ID, int _op_type, boolean _BeginOk, boolean _DataLikelyModified) {
+    // Reminder! If it cannot do the thing then it MUST log, but never throw.
+    // Reminder2! Concurrent calls for the same (shot+id) are strictly 
+    //   prevented with external locking, however need to consider that some 
+    //   previous operation could be unexpectedly interrupted at any stage.
+
+        if (!withSyncState) return;
+
+        String tmp_fsuff_prep = SYNC_SUFF[_op_type][SYNF_PREP]; // FSUFF_FLAGPREP; // YYY
+        String tmp_fsuff_done = SYNC_SUFF[_op_type][SYNF_DONE]; // FSUFF_FLAGDONE; // YYY
+        int tmp_other_type = 1 - _op_type; // YYY
+        String tmp_fsuff_prep_other = SYNC_SUFF[tmp_other_type][SYNF_PREP]; // YYY
+        String tmp_fsuff_done_other = SYNC_SUFF[tmp_other_type][SYNF_DONE]; // YYY
+
+        String tmp_cmn_part = SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID); // YYY
+        String tmp_new_fname1 = tmp_cmn_part + tmp_fsuff_prep;
+        String tmp_new_fname2 = tmp_cmn_part + tmp_fsuff_done;
+        String tmp_new_fname3 = tmp_cmn_part + tmp_fsuff_prep_other; // YYY
+        String tmp_new_fname4 = tmp_cmn_part + tmp_fsuff_done_other; // YYY
+        File tmp_new_file1 = new File(tmp_new_fname1);
+        File tmp_new_file2 = new File(tmp_new_fname2);
+        File tmp_new_file3 = new File(tmp_new_fname3); // YYY
+        File tmp_new_file4 = new File(tmp_new_fname4); // YYY
+
+        if (_DataLikelyModified) {
+            boolean tmp_ok = false;
+            try {
+                if (tmp_new_file1.renameTo(tmp_new_file2)) tmp_ok = true; // YYY
+                if (!tmp_ok) if (tmp_new_file2.isFile()) tmp_ok = true; // YYY
+                if (tmp_ok) tmp_new_file1.delete();
+            } catch (Exception ignored) {}
+            if (!tmp_ok) {
+                Tum3Logger.DoLog(db_name, true, "Sync error: <" + tmp_new_fname2 + "> could not be renamed from <" + tmp_new_fname1 + "> and apparently does not exist");
+            }
+            try {
+                SetFileMTime(tmp_new_file2);
+            } catch (Exception e) {
+                if (tmp_ok) Tum3Logger.DoLog(db_name, true, "Sync error: failed to update mtime on <" + tmp_new_fname2 + ">: " + e.toString());
+            }
+            tmp_ok = false;
+            try {
+                tmp_new_file3.delete(); // YYY
+                tmp_new_file4.delete(); // YYY
+                if (!tmp_new_file3.exists() && !tmp_new_file4.exists()) tmp_ok = true;
+            } catch (Exception ignored) {}
+            if (!tmp_ok) {
+                Tum3Logger.DoLog(db_name, true, "Sync error: <" + tmp_new_fname3 + "> or <" + tmp_new_fname4 + "> could not be deleted");
+            }
+        } else {
+            try {
+                tmp_new_file1.delete();
+                tmp_new_file2.delete();
+            } catch (Exception ignored) {}
+            if (_BeginOk) {
+                if (tmp_new_file1.exists())
+                    Tum3Logger.DoLog(db_name, true, "Sync error: <" + tmp_new_fname1 + "> could not be deleted");
+                if (tmp_new_file2.exists())
+                    Tum3Logger.DoLog(db_name, true, "Sync error: <" + tmp_new_fname2 + "> could not be deleted");
+            }
+        }
+    }
+
+    public String getPackedLastList() throws Exception {
+
+        //if (true) throw new Exception("Test exceptn 1");
+        StringList tmp_list = GetRawRootDir();
+
+        if (tmp_list.size() <= 0) return "";
+        Collections.sort(tmp_list);
+        String tmp_last_month = tmp_list.get(tmp_list.size() - 1).substring(2);
+        String tmp_prev_month = "";
+        if (tmp_list.size() > 1) tmp_prev_month = tmp_list.get(tmp_list.size() - 2).substring(2);
+        //System.out.println("[aq2j] DEBUG: tmp_last_month=<" + tmp_last_month + "> tmp_prev_month=<" + tmp_prev_month + ">");
+
+        String tmp_res = getLastDay(tmp_last_month);
+        if (tmp_res.isEmpty() && !tmp_prev_month.isEmpty()) tmp_res = getLastDay(tmp_prev_month);
+
+        return tmp_res;
     }
 
     public boolean VolatilePathPresent() {
@@ -441,18 +1610,25 @@ public class Tum3Db implements Runnable, AppStopHook {
             openShots.put(tmp_name, tmpShot);
         }
         String tmp_master_name = tmp_name.substring(0, 4);
-        if (Tum3Util.StrNumeric(tmp_master_name) && (4 == tmp_master_name.length())) {
-            synchronized (MasterListLock) {
-                if (MasterList == null) LoadMasterList();
-                if (MasterList.indexOf(tmp_master_name) < 0)
-                    MasterList.add(tmp_master_name);
-            }
-        }
+        if (Tum3Util.StrNumeric(tmp_master_name) && (4 == tmp_master_name.length()))
+            AppendMonthToMasterList(tmp_master_name, true); // YYY
         tmpShot.CompleteCreation(); // Note. If already exists, it opens normally as old 
         // and then raises an exception that propagates out.
 
         return tmpShot;
 
+    }
+
+    private void AppendMonthToMasterList(String _master_name, boolean _auto_load) throws Exception { // YYY
+
+        synchronized (MasterListLock) {
+            if (MasterList == null) {
+                if (!_auto_load) return; // YYY
+                LoadMasterList();
+            }
+            if (MasterList.indexOf(_master_name) < 0)
+                MasterList.add(_master_name);
+        }
     }
 
     public String UpdateUgcData(byte thrd_ctx, String UserName, boolean UserCanAddTags, UgcReplyHandler the_link, int _req_id, String _shot_name, byte[] _upd_arr) throws Exception {
@@ -713,8 +1889,7 @@ public class Tum3Db implements Runnable, AppStopHook {
                     if (file.isDirectory()) {
                         String tmp_name = file.getName();
                         if (Tum3Util.StrNumeric(tmp_name) && (4 == tmp_name.length())) {
-                            if ('9' == tmp_name.charAt(0)) tmp_name = "19" + tmp_name;
-                            else tmp_name = "20" + tmp_name;
+                            tmp_name = YearExtend_Intl(tmp_name);
                             if (tmp_last_dir.compareTo(tmp_name) < 0) tmp_last_dir = tmp_name;
                             //System.out.println("[aq2j] DEBUG: subdir '" + tmp_name + "' tmp_last_dir=" + tmp_last_dir);
                         }
@@ -856,11 +2031,34 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    public void setOtherServerAllInfo(String _Info, String _Sync, Object excluded_sender) {
+
+        OtherServerInfo = _Info;
+        OtherServer_last_time = new Tum3Time();
+        OtherServer_sync_info = _Sync;
+        Tum3Broadcaster.DistributeFlag(this, excluded_sender); // YYY
+
+    }
+
     public void setOtherServerInfo(String _Info) {
 
         OtherServerInfo = _Info;
         OtherServer_last_time = new Tum3Time();
         Tum3Broadcaster.DistributeFlag(this);
+
+    }
+
+    public void setOtherServerInfoSync(String _Sync) {
+
+        OtherServer_sync_info = _Sync;
+        Tum3Broadcaster.DistributeFlag(this);
+
+    }
+
+    private String getOtherServerInfoSync() { // YYY
+
+        if (null != OtherServer_sync_info) return OtherServer_sync_info;
+        else return "";
 
     }
 
@@ -884,14 +2082,23 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     public String getServerInfo() {
 
-        if (uplink_enabled) return
+        String tmp_result_str = "";
+
+        if (uplink_enabled) tmp_result_str = // YYY
             "[master]\r\n" + getThisServerInfoExt() +
             "[backup]\r\n" + getOtherServerInfoExt();
-        else if (downlink_enabled) return
+        else if (downlink_enabled) tmp_result_str = // YYY
             "[master]\r\n" + getOtherServerInfoExt() +
             "[backup]\r\n" + getThisServerInfoExt();
-        else return
+        else tmp_result_str = // YYY
             "[server]\r\n" + getThisServerInfoExt();
+
+        if (uplink_enabled) tmp_result_str = tmp_result_str +
+            "[sync]\r\n" + getThisServerInfoSync(); // YYY
+        else if (downlink_enabled) tmp_result_str = tmp_result_str +
+            "[sync]\r\n" + getOtherServerInfoSync(); // YYY
+
+        return tmp_result_str;
     }
 
     private int LastShotId_int() {

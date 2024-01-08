@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2022-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -88,9 +88,9 @@ public class SrvLinkMetaCli extends SrvLinkMeta implements UplinkManager.UplinkO
 
     protected void UplinkConnExtra(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
 
-                    dbLink.setOtherServerConnected(true); // YYY
-                    ForceSendUserList(thrd_ctx, ctx); // YYY
-                    UplinkManager.setUplink(getDbIndex(), this); // YYY
+        dbLink.setOtherServerConnected(true); // YYY
+        ForceSendUserList(thrd_ctx, ctx); // YYY
+        UplinkManager.setUplink(getDbIndex(), this); // YYY
 
     }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -217,7 +217,12 @@ public class SrvLink extends SrvLinkBase implements UgcReplyHandlerExt, aq3sende
         if (aq3hInstance != null) aq3hInstance.DeregisterLink(this); // YYY Moved here from above "return true"
         flushWritingShot(); // YYY Moved here from above "return true"
 
-        if (null != segmented_data) Segmented_data_cancel();
+        if (null != segmented_data) 
+            try {
+                Segmented_data_cancel();
+            } catch (Exception e) {
+                Tum3Logger.DoLog(db_name, true, "WARNING: exception in Segmented_data_cancel()." + " Session: " + DebugTitle() + "; " + Tum3Util.getStackTrace(e)); // YYY
+            }
         if (dbLink != null) {
             Tum3Broadcaster.release(dbLink, this);
             dbLink.releaseDbClient();
@@ -627,7 +632,7 @@ public class SrvLink extends SrvLinkBase implements UgcReplyHandlerExt, aq3sende
     }
 
 
-    private void Segmented_data_cancel() {
+    private void Segmented_data_cancel() throws Exception {
 
         segmented_TraceReq = null;
         segmented_data.close();
@@ -1194,6 +1199,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
         if (NeedPushServerInfo && (RCompatVersion > 428) && (null != dbLink)) {
             NeedPushServerInfo = false; // YYY
+            //Tum3Logger.DoLog(db_name, true, "[DEBUG] PushServerFriendlyInfo()");
             PushServerFriendlyInfo(thrd_ctx, dbLink.getServerInfo()); // YYY
         }
     }

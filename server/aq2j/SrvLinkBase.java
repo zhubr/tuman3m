@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2023-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -313,11 +313,14 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
         try {
             return ReadFromServerInternal(thrd_ctx, outbound, hurry);
         } catch (Exception e) {
+            UnexpectedServerError(e); // YYY
             Tum3Logger.DoLog(getLogPrefixName(), false, "FATAL: Closing in ReadFromServer because: " + Tum3Util.getStackTrace(e));
             ShutdownSrvLink("Exception in SrvLink.ReadFromServer2: " + Tum3Util.getStackTrace(e));
             throw new Exception("[aq2j] FATAL: Closing in ReadFromServer because: " + e);
         }
     }
+
+    protected void UnexpectedServerError(Exception e) { }
 
     protected boolean NeedToRequestKeepalive(long sys_millis, boolean may_disconn) throws Exception {
 
@@ -687,7 +690,11 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
         }
         if (null != tmp_buffs)
             for (int tmp_i=0; tmp_i < tmp_buffs.length; tmp_i++)
-                tmp_buffs[tmp_i].CancelData();
+                try {
+                    tmp_buffs[tmp_i].CancelData();
+                } catch (Exception e) {
+                    Tum3Logger.DoLog(getLogPrefixName(), true, "Unexpected exception in CancelData(): " + Tum3Util.getStackTrace(e)); // YYY
+                }
 
         return false;
 
@@ -719,7 +726,7 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
         if (TalkMsgQueueOverflow) {
             TalkMsgQueueOverflow = false;
             _NewMessageBoxCompat(thrd_ctx, "Internal error: TalkMsgQueue overflow (CONST_MAX_TALK_OUT_QUEUE needs to be increased) in session " + DebugTitle(), true);
-            //Tum3Logger.DoLog(db_name, true, "Internal error: TalkMsgQueue overflow (CONST_MAX_TALK_OUT_QUEUE needs to be increased) in session " + DebugTitle());
+            //Tum3Logger.DoLog(getLogPrefixName(), true, "Internal error: TalkMsgQueue overflow (CONST_MAX_TALK_OUT_QUEUE needs to be increased) in session " + DebugTitle());
         }
 
         NeedToRequestKeepalive(System.currentTimeMillis(), true);

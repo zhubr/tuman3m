@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -81,6 +81,10 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_SERVERINFO = (byte)0xAF; // Pushed actually.
 
     public final static byte REQUEST_TYPE_JSON = (byte)0xAD; // This is for both request and reply.
+    public final static byte REQUEST_TYPE_JSON_WBIN = (byte)0xAE; // This is for both request and reply.
+
+    public final static byte REQUEST_TYPE_FPART_TRNSF = (byte)0xB0; // YYY
+    public final static byte REQUEST_TYPE_FPART_CNFRM = (byte)0xB1; // YYY
 
     // Special IDs
     public final static int CONST_ID_LIST_ALL = -1;

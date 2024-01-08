@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -129,12 +129,18 @@ public final class Tum3Broadcaster {
         }
     }
 
-    public final static void DistributeFlag(Tum3Db origin_db) { // YYY
+    public final static void DistributeFlag(Tum3Db origin_db) {
+
+        DistributeFlag(origin_db, null);
+
+    }
+
+    public final static void DistributeFlag(Tum3Db origin_db, Object excluded_sender) { // YYY
 
         synchronized(clientList) { 
             // Reminder. This loop is supposed to complete quickly, no delays inside!
             for (SrvLinkIntf thisClient: clientList) 
-                if (thisClient.GetDb() == origin_db) {
+                if ((excluded_sender != thisClient) && (thisClient.GetDb() == origin_db)) { // YYY
                     thisClient.SetFlag();
                     //System.out.println("[aq2j] DEBUG: DistributeFlag() processed " + thisClient.DebugTitle());
                 }

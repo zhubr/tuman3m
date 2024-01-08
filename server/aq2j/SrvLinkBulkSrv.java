@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2023-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -121,6 +121,7 @@ public class SrvLinkBulkSrv extends SrvLinkIntercon {
 
         if (dbLink != null) {
             //Tum3Broadcaster.release(dbLink, this);
+            dbLink.BupStop();
             dbLink.releaseDbClient();
             dbLink = null;
         }
@@ -129,20 +130,16 @@ public class SrvLinkBulkSrv extends SrvLinkIntercon {
         return false;
     }
 
-    protected void onJSON_Intrnl(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
+    protected void onJSON_Intrnl(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo, byte[] bin_att, int att_ofs, int att_len) throws Exception {
 
-        onJSON(thrd_ctx, ctx, jo);
+        onJSON(thrd_ctx, ctx, jo, bin_att, att_ofs, att_len);
 
-        //if (WasAuthorized) {
-        //    if (jo.has(JSON_NAME_server_info)) dbLink.setOtherServerInfo(jo.getString(JSON_NAME_server_info)); // YYY
-        //    if (jo.has(JSON_NAME_userlist)) BroadcastUsrList(jo.getString(JSON_NAME_userlist));
-        //}
     }
 
     public void AddGeneralEvent(Tum3Db origin_db, GeneralDbDistribEvent ev, String thisReceiverName, String thisEchoName) {
     }
 
-    protected void onJSON(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo) throws Exception {
+    protected void onJSON(byte thrd_ctx, RecycledBuffContext ctx, JSONObject jo, byte[] bin_att, int att_ofs, int att_len) throws Exception {
 
         //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] Got JSON function <" + jo.get(JSON_NAME_function) + ">");
         String tmp_func = jo.getString(JSON_NAME_function);
@@ -151,7 +148,69 @@ public class SrvLinkBulkSrv extends SrvLinkIntercon {
             FinishJsonLoginReq(thrd_ctx, ctx, jo);
             return;
         }
-        //super.onJSON(thrd_ctx, ctx, jo);
+        if (JSON_FUNC_bup_get_last_list.equals(tmp_func) && WasAuthorized) {
+            JSONObject jo2 = new JSONObject();
+            jo2.put(JSON_NAME_function, JSON_FUNC_bup_rep_last_list);
+            try {
+                byte[] tmp_b = Tum3Util.StringToBytesRaw(dbLink.getPackedLastList());
+                Send_JSON(thrd_ctx, ctx, jo2, tmp_b, 0, tmp_b.length);
+            } catch (Exception e) {
+                Tum3Logger.DoLog(getLogPrefixName(), true, "Unexpected exception in getPackedLastList(): " + Tum3Util.getStackTrace(e));
+                jo2.put(JSON_NAME_err_msg, "Unexpected exception in getPackedLastList(): " + e.toString());
+                Send_JSON(thrd_ctx, ctx, jo2, null, 0, 0);
+            }
+            return;
+        }
     }
 
+    private void Process_BupFileUpload(byte thrd_ctx, RecycledBuffContext ctx, byte[] req_body, int req_trailing_len) throws Exception {
+
+        if (dbLink == null) {
+            Tum3Logger.DoLog(db_name, true, "Internal error: no dbLink in Process_BupFileUpload." + " Session: " + DebugTitle());
+            throw new Exception("no dbLink in Process_BupFileUpload");
+        }
+        if (req_trailing_len < fixed_fpart_header_size) throw new Exception("Packet too small in Process_BupFileUpload");
+
+        String tmp_shot_name = bytes2string(req_body, 0);
+        String tmp_file_name = bytes2string(req_body, 16);
+
+        ByteBuffer tmpBB = ByteBuffer.wrap(req_body);
+        tmpBB.limit(req_trailing_len);
+        tmpBB.order(ByteOrder.LITTLE_ENDIAN);
+
+        tmpBB.position(16+16);
+        tmpBB.getInt(); // Reserved (SignalId)
+        int HAccessOptions = tmpBB.getInt(); // Vol/Nonvol (getEditedByte)
+        boolean tmp_is_volatile = (0x01 == HAccessOptions); // YYY
+        long HFullSize = tmpBB.getLong();
+        long HSegOffset = tmpBB.getLong();
+        tmpBB.getLong(); // Reserved.
+
+        long tmp_resulting_ofs = -1;
+        byte[] tmp_b = null;
+        int tmp_errtxt_len = 0;
+        try {
+            //Tum3Logger.DoLog(db_name, true, "[aq2j] Process_BupFileUpload: shot_name=" + tmp_shot_name + " file_name=" + tmp_file_name + ", HAccessOptions=" + HAccessOptions + " HFullSize=" + HFullSize + " HSegOffset=" + HSegOffset);
+            tmp_resulting_ofs = dbLink.AcceptBupPortion(tmp_is_volatile, tmp_shot_name, tmp_file_name, HFullSize, HSegOffset, req_body, fixed_fpart_header_size, req_trailing_len - fixed_fpart_header_size);
+        } catch (Exception e) {
+            Tum3Logger.DoLog(getLogPrefixName(), true, "Storing synced data failed at backup: " + Tum3Util.getStackTrace(e));
+            tmp_b = Tum3Util.StringToBytesRaw(e.toString());
+            tmp_errtxt_len = tmp_b.length;
+        }
+
+        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, ctx);
+
+        InitFPartBuff(tmp_is_volatile, tmpBuff, REQUEST_TYPE_FPART_CNFRM, tmp_errtxt_len, null, tmp_shot_name, tmp_file_name, HFullSize, tmp_resulting_ofs);
+        if (tmp_errtxt_len > 0) tmpBuff.putBytes(tmp_b);
+
+        PutBuff(thrd_ctx, tmpBuff, ctx);
+
+    }
+
+    protected void ExecuteReq(byte thrd_ctx, byte req_code, byte[] req_body, int req_trailing_len) throws Exception {
+
+        if (REQUEST_TYPE_FPART_TRNSF == req_code) Process_BupFileUpload(thrd_ctx, null, req_body, req_trailing_len); // YYY
+        else super.ExecuteReq(thrd_ctx, req_code, req_body, req_trailing_len);
+
+    }
 }

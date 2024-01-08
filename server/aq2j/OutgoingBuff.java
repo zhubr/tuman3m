@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -192,12 +192,11 @@ public class OutgoingBuff implements TumProtoConsts, OutBuffData {
     }
 
     public boolean SentAll() {
-        //System.out.print("[rem=" + (byte_buff.position() + curr_continuator_len - curr_sent_count) + "/" + byte_buff.position() + "/" + curr_continuator_len + "/" + curr_sent_count + "]");
-        //System.out.print("[" + hashCode() /* Thread.currentThread().getId() */ + ":len2=" + curr_continuator_len + "]");
+        //Tum3Logger.DoLog("OutgoingBuff", true, "[debug] SentAll(): " + curr_sent_count + "," + byte_buff.position() + ", " + curr_continuator_len);
         return curr_sent_count >= (byte_buff.position() + curr_continuator_len);
     }
 
-    public void CancelData() {
+    public void CancelData() throws Exception {
         OutBuffContinuator tmp_continuator = null;
         { // synchronized(ContinuatorLock)
             if (null != curr_continuator) {

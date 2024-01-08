@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -448,13 +448,15 @@ public class Tum3Shot {
     private static final int const_tum3ng_sign_h = 0x484D5554;
     private static final int const_tum3ng_sign_s = 0x534D5554;
 
-    private static final String FSUFF_NORMAL = ".000"; // YYY
-    private static final String FSUFF_CFGZIP = ".010"; // YYY
-    private static final String FSUFF_BUP_DENSITY = ".001"; // YYY
-    private static final String FSUFF_BUP_GENERAL = ".002"; // YYY
+    public static final String FSUFF_NORMAL = ".000";
+    private static final String FSUFF_CFGZIP = ".010";
+    private static final String FSUFF_BUP_DENSITY = ".001";
+    public static final String FSUFF_BUP_GENERAL = ".002";
+    public static final String FSUFF_BUP_ERASED = ".004"; // YYY
     private static final String FSUFF_TMPFILE = ".900"; // ".003"; // YYY
-    private static final String FSUFF_FLAGPREP = ".801"; // YYY
-    private static final String FSUFF_FLAGDONE = ".800"; // YYY
+
+    private static final byte DATA_AREA_MAIN = 1; // YYY
+    private static final byte DATA_AREA_VOLATILE = 2; // YYY
 
     private static final int CONST_MIN_SIGN_PACK_LEN = 100; // XXX TODO!!! Make it configurable.
     private static final int CONST_DENSITY_FSIZE_LIMIT = 200000;
@@ -548,6 +550,25 @@ public class Tum3Shot {
                     }
                 }
             } 
+        }
+
+        public UtilCreateFile1(String _DbName, String FNameBase, String FExt1, String FExt2) throws Exception {
+
+            db_name = _DbName;
+            NotStored = true; // TODO. Ideally, it should somehow tell "Try later" if could not open.
+            for (int tmp_attempt = 1; tmp_attempt <= 4; tmp_attempt++) { // YYY
+                if ((tmp_attempt & 1) == 1) Fname = FNameBase + FExt1;
+                else                        Fname = FNameBase + FExt2; // YYY
+                try {
+                    raf = new RandomAccessFile(Fname, "r");
+                    //System.out.println("[aq2j] DEBUG: File '" + Fname + "' opened(r).");
+                    NotStored = false;
+                    break;
+                } catch (Exception e) {
+                    if (((tmp_attempt & 1) == 1) && !(e instanceof FileNotFoundException)) // YYY
+                        break; // Note. The loop is supposed to only catch a renamed file, not any sorts of errors with it.
+                }
+            }
         }
 
         public void readHeaders(String _shotName, int _SignalId) throws Exception {
@@ -931,7 +952,7 @@ public class Tum3Shot {
         File[] tmpFiles = dir.listFiles(new FilenameFilter() {
             @Override
             public boolean accept(File dir, String name) {
-                if ((8 <= name.length()) && name.endsWith(FSUFF_NORMAL))
+                if ((8 <= name.length()) && (name.endsWith(FSUFF_NORMAL) || ((DATA_AREA_VOLATILE == theKind) && name.endsWith(FSUFF_BUP_GENERAL)))) // YYY
                     if (Tum3Util.StrNumeric(name.substring(0, name.length()-4))) 
                         return true;
                 return false;
@@ -943,7 +964,7 @@ public class Tum3Shot {
             tmp_name = tmp_name.substring(0, tmp_name.length()-4);
             int tmp_id = Integer.parseInt(tmp_name);
             //System.out.print("[aq2j] DEBUG: considering ID= '" + tmp_id + "'");
-            if (1 == theKind) CacheIds.put(tmp_id, theKind);
+            if (DATA_AREA_MAIN == theKind) CacheIds.put(tmp_id, theKind);
             else {
                 if (CacheIds.containsKey(tmp_id)) {
                     CacheIds.put(tmp_id, (byte)(CacheIds.get(tmp_id) | theKind));
@@ -956,8 +977,8 @@ public class Tum3Shot {
     private void BuildCache() {
 
         synchronized(CacheIds) {
-            if (shotPathMain.length() > 0) BuildCache_Internal(shotPathMain, (byte)1);
-            if (shotPathVol.length() > 0)  BuildCache_Internal(shotPathVol, (byte)2);
+            if (shotPathMain.length() > 0) BuildCache_Internal(shotPathMain, DATA_AREA_MAIN);
+            if (shotPathVol.length() > 0)  BuildCache_Internal(shotPathVol, DATA_AREA_VOLATILE);
         }
 
     }
@@ -985,13 +1006,6 @@ public class Tum3Shot {
 
     }
 
-    private String SignalFName(int thisSignalId) {
-        StringBuffer tmp_st = new StringBuffer();
-        tmp_st.append("" + thisSignalId);
-        while (tmp_st.length() < 4) tmp_st.insert(0, '0');
-        return tmp_st.toString();
-    }
-
     private boolean RemoveFromExpected(int _id) {
 
         if (null == expected_ids) return false;
@@ -1008,7 +1022,7 @@ public class Tum3Shot {
 
         //System.out.println("[aq2j] DEBUG: GetByPositionNew(): '" + shotName + "' id=" + thisSignalId);
 
-        String tmpCommonName = shotName + File.separator + SignalFName(thisSignalId) + FSUFF_NORMAL;
+        String tmpCommonName = shotName + File.separator + Tum3Db.SignalFName(thisSignalId); // YYY
         String tmpActualPath = shotPathMain;
 
         if (_as_volatile) {
@@ -1018,7 +1032,9 @@ public class Tum3Shot {
 
         UtilCreateFile1 tmpFF = null;
         try {
-            tmpFF = new UtilCreateFile1(DbName(), tmpActualPath + shotSubdir + File.separator + tmpCommonName, false);
+            tmpFF = _as_volatile ?
+                new UtilCreateFile1(DbName(), tmpActualPath + shotSubdir + File.separator + tmpCommonName, FSUFF_NORMAL, FSUFF_BUP_GENERAL) // YYY
+              : new UtilCreateFile1(DbName(), tmpActualPath + shotSubdir + File.separator + tmpCommonName + FSUFF_NORMAL, false);
         } catch (Exception e) {
             return null;
         }
@@ -1156,51 +1172,15 @@ public class Tum3Shot {
 
     }
 
-    private void SyncStatusVolOpBegin(int _ID) throws Exception {
-    // Reminder! If it cannot do the thing then it MUST throw!
-    // Reminder2! Concurrent calls for the same (shot+id) are strictly 
-    //   prevented with external locking, however need to consider that some 
-    //   previous operation could be unexpectedly interrupted at any stage.
+    private void SyncStatusVolOpBegin(int _ID, int _op_type) throws Exception {
 
-        if (!parent_db.withSyncState) return;
+        parent_db.SyncStatusVolOpBegin(shotSubdir, shotName, _ID, _op_type);
 
-        File tmp_monthdir    = new File(parent_db.SYNC_STATE_PATH + shotSubdir);
-        File tmp_shotdir     = new File(parent_db.SYNC_STATE_PATH + shotSubdir + File.separator + shotName);
-        String tmp_new_fname = parent_db.SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID) + FSUFF_FLAGPREP;
-        File tmp_new_file = new File(tmp_new_fname);
-
-        for (int attempt = 0; attempt < 3; attempt++) {
-            try {
-                tmp_monthdir.mkdir();
-                tmp_shotdir.mkdir();
-                tmp_new_file.createNewFile();
-            } catch (Exception ignored) {}
-            if (tmp_new_file.exists()) break;
-        }
-        if (!tmp_new_file.isFile()) throw new Exception("Failed to create sync flag file <" + tmp_new_fname + ">");
     }
 
-    private void SyncStatusVolOpEnd(int _ID, boolean _BeginOk) {
-    // Reminder! If it cannot do the thing then it MUST log, but never throw.
-    // Reminder2! Concurrent calls for the same (shot+id) are strictly 
-    //   prevented with external locking, however need to consider that some 
-    //   previous operation could be unexpectedly interrupted at any stage.
+    private void SyncStatusVolOpEnd(int _ID, int _op_type, boolean _BeginOk, boolean _DataLikelyModified) {
 
-        if (!parent_db.withSyncState) return;
-
-        String tmp_new_fname1 = parent_db.SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID) + FSUFF_FLAGPREP;
-        String tmp_new_fname2 = parent_db.SYNC_STATE_PATH + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ID) + FSUFF_FLAGDONE;
-        File tmp_new_file1 = new File(tmp_new_fname1);
-        File tmp_new_file2 = new File(tmp_new_fname2);
-
-        boolean tmp_ok = false;
-        try {
-            tmp_new_file2.delete();
-            tmp_ok = tmp_new_file1.renameTo(tmp_new_file2) || tmp_new_file2.isFile();
-        } catch (Exception ignored) {}
-        if (!tmp_ok && _BeginOk) {
-            Tum3Logger.DoLog(DbName(), true, "Sync error: <" + tmp_new_fname2 + "> could not be renamed from <" + tmp_new_fname1 + "> and apparently does not exist");
-        }
+        parent_db.SyncStatusVolOpEnd(shotSubdir, shotName, _ID, _op_type, _BeginOk, _DataLikelyModified);
     }
 
     public void putTrace(int _ThisID, ByteBuffer _header, ByteBuffer _body, ShotChangeMonitor chgMonitor, boolean DataIsVolatile) throws Exception {
@@ -1259,10 +1239,11 @@ public class Tum3Shot {
             if (!tmp_monthdir.exists()) try { tmp_monthdir.mkdir(); } catch (Exception ignored) {} else tmp_monthdir = null; // YYY
             if (!tmp_shotdir.exists()) try { tmp_shotdir.mkdir(); } catch (Exception ignored) {} else tmp_shotdir = null; // YYY
         }
-        String tmp_new_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_NORMAL;
+        String tmp_new_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_NORMAL;
+        File tmp_final_file = new File(tmp_new_fname); // YYY
         if (tmp_with_rename) {
             tmp_target_fname = tmp_new_fname;
-            tmp_new_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_TMPFILE;
+            tmp_new_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_TMPFILE;
         }
 
         //UtilCreateFile1 tmp_FF = null;
@@ -1273,18 +1254,20 @@ public class Tum3Shot {
 
         try {
             if (tmp_as_volatile) {
-                SyncStatusVolOpBegin(_ThisID); // YYY
+                SyncStatusVolOpBegin(_ThisID, Tum3Db.SYNF_ADD); // YYY
                 SyncStatusVolOpBegin_ok = true; // YYY
             }
 
             if (tmp_with_rename) {
-                String tmp_backup_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_BUP_GENERAL;
+                String tmp_backup_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_BUP_GENERAL;
                 File tmp_backup_file = new File(tmp_backup_fname);
-                if (tmp_backup_file.exists()) tmp_backup_file.delete();
-                if (tmp_backup_file.exists()) {
-                    String tmp_err_msg = "Backup file <" + tmp_backup_fname + "> could not be deleted";
-                    Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
-                    throw new Exception(tmp_err_msg);
+                if (tmp_backup_file.exists() && tmp_final_file.isFile()) { // YYY
+                    tmp_backup_file.delete();
+                    if (tmp_backup_file.exists()) {
+                        String tmp_err_msg = "Backup file <" + tmp_backup_fname + "> could not be deleted";
+                        Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
+                        throw new Exception(tmp_err_msg);
+                    }
                 }
             }
 
@@ -1364,12 +1347,11 @@ public class Tum3Shot {
 
             if (tmp_with_rename) {
                 File tmp_orig_file = new File(tmp_target_fname);
-                String tmp_bup_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_BUP_GENERAL;
+                String tmp_bup_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_BUP_GENERAL;
                 File tmp_bup_file = new File(tmp_bup_fname);
                 boolean tmp_prev_file_exists = tmp_orig_file.exists(); // YYY
                 if (tmp_prev_file_exists) if (!tmp_orig_file.renameTo(tmp_bup_file)) throw new Exception("Previous file <" + tmp_target_fname + "> could not be renamed into <" + tmp_bup_fname + ">"); // YYY
                 File tmp_temp_file = new File(tmp_new_fname);
-                File tmp_final_file = new File(tmp_target_fname);
                 if (!tmp_temp_file.renameTo(tmp_final_file)) {
                     String tmp_err_msg = "Temporary new file <" + tmp_new_fname + "> could not be renamed into <" + tmp_target_fname + ">";
                     Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
@@ -1381,6 +1363,9 @@ public class Tum3Shot {
                     throw new Exception(tmp_err_msg);
                 }
             }
+
+            if (!tmp_as_volatile && parent_db.writeprotect_storage) if (!tmp_final_file.setWritable(false)) 
+                Tum3Logger.DoLog(DbName(), true, "putTrace: setting R/O " + tmp_target_fname + " failed."); // YYY
 
             tmp_store_ok = true;
 
@@ -1397,7 +1382,7 @@ public class Tum3Shot {
                 Tum3Logger.DoLog(DbName(), true, "WARNING: close() error in '" + tmp_new_fname + "': " + Tum3Util.getStackTrace(e));
             }
 
-            if (tmp_as_volatile) SyncStatusVolOpEnd(_ThisID, SyncStatusVolOpBegin_ok); // YYY
+            if (tmp_as_volatile) SyncStatusVolOpEnd(_ThisID, Tum3Db.SYNF_ADD, SyncStatusVolOpBegin_ok, tmp_store_ok); // YYY
 
             boolean tmp_was_waiting = false;
             synchronized(CacheIds) {
@@ -1440,28 +1425,37 @@ public class Tum3Shot {
         }
 
         try {
-            SyncStatusVolOpBegin(_ThisID); // YYY
+            SyncStatusVolOpBegin(_ThisID, Tum3Db.SYNF_ERASE); // YYY
             SyncStatusVolOpBegin_ok = true; // YYY
 
-            String tmp_target_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_NORMAL;
-            String tmp_bup_fname    = shotPathVol + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_BUP_GENERAL;
-            File tmp_backup_file = new File(tmp_bup_fname);
+            String tmp_target_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_NORMAL;
+            String tmp_bup_fname    = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID); // YYY
+            File tmp_orig_file = new File(tmp_target_fname);
+            File tmp_backup_file = new File(tmp_bup_fname + FSUFF_BUP_GENERAL);
             if (tmp_backup_file.exists()) tmp_backup_file.delete();
             if (tmp_backup_file.exists()) {
-                String tmp_err_msg = "Backup file <" + tmp_bup_fname + "> could not be deleted";
+                String tmp_err_msg = "Backup file <" + tmp_bup_fname + FSUFF_BUP_GENERAL + "> could not be deleted";
                 Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
                 throw new Exception(tmp_err_msg);
             }
+            tmp_backup_file = new File(tmp_bup_fname + FSUFF_BUP_ERASED);
+            if (tmp_backup_file.exists() && tmp_orig_file.exists()) { // YYY
+                tmp_backup_file.delete();
+                if (tmp_backup_file.exists()) {
+                    String tmp_err_msg = "Backup file <" + tmp_bup_fname + FSUFF_BUP_ERASED + "> could not be deleted";
+                    Tum3Logger.DoLog(DbName(), true, tmp_err_msg);
+                    throw new Exception(tmp_err_msg);
+                }
+            }
 
-            File tmp_orig_file = new File(tmp_target_fname);
-            File tmp_bup_file = new File(tmp_bup_fname);
-            if (!tmp_orig_file.renameTo(tmp_bup_file)) throw new Exception("Previous file <" + tmp_target_fname + "> could not be renamed into <" + tmp_bup_fname + ">");
+            File tmp_bup_file = new File(tmp_bup_fname + FSUFF_BUP_ERASED);
+            if (!tmp_orig_file.renameTo(tmp_bup_file)) if (tmp_orig_file.isFile()) throw new Exception("Previous file <" + tmp_target_fname + "> could not be renamed into <" + tmp_bup_fname + FSUFF_BUP_ERASED + ">"); // YYY
 
             tmp_delete_ok = true;
 
         } finally {
 
-            SyncStatusVolOpEnd(_ThisID, SyncStatusVolOpBegin_ok); // YYY
+            SyncStatusVolOpEnd(_ThisID, Tum3Db.SYNF_ERASE, SyncStatusVolOpBegin_ok, tmp_delete_ok); // YYY
 
             synchronized(CacheIds) {
                 byte tmp_cache_val = 0;
@@ -1519,10 +1513,11 @@ public class Tum3Shot {
 
         boolean tmp_need_sync_end = false;
         try {
-            String tmp_bup_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_BUP_DENSITY;
-            String tmp_std_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_NORMAL;
-            String tmp_nonvol_fname = shotPathMain + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_NORMAL; // YYY
-            String tmp_tmp_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + SignalFName(_ThisID) + FSUFF_TMPFILE;
+            String tmp_cmn_part = shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID);
+            String tmp_bup_fname =   tmpActualPath + tmp_cmn_part + FSUFF_BUP_DENSITY;
+            String tmp_std_fname =   tmpActualPath + tmp_cmn_part + FSUFF_NORMAL;
+            String tmp_nonvol_fname = shotPathMain + tmp_cmn_part + FSUFF_NORMAL; // YYY
+            String tmp_tmp_fname =   tmpActualPath + tmp_cmn_part + FSUFF_TMPFILE;
             boolean tmp_bup_ok = false;
 
             // Check for editlocked tag.
@@ -1565,7 +1560,7 @@ public class Tum3Shot {
 
             if (tmp_as_volatile) {
                 tmp_need_sync_end = true;
-                SyncStatusVolOpBegin(_ThisID);
+                SyncStatusVolOpBegin(_ThisID, Tum3Db.SYNF_ADD);
                 SyncStatusVolOpBegin_ok = true;
             }
 
@@ -1678,7 +1673,7 @@ public class Tum3Shot {
             if (tmp_result.length() == 0) tmp_result = Tum3Util.getStackTrace(e);
         }
 
-        if (tmp_as_volatile && tmp_need_sync_end) SyncStatusVolOpEnd(_ThisID, SyncStatusVolOpBegin_ok); // YYY
+        if (tmp_as_volatile && tmp_need_sync_end) SyncStatusVolOpEnd(_ThisID, Tum3Db.SYNF_ADD, SyncStatusVolOpBegin_ok, tmp_writing_started); // YYY
 
         synchronized(CacheIds) {
             byte tmp_cache_val = 0;
