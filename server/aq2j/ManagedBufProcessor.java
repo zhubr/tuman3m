@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2023-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -10,9 +10,10 @@
  * OF ANY KIND.
  *
  */
-package aq2db;
+package aq2j;
 
-public interface a
+
+public interface ManagedBufProcessor
 {
-    public final static int CurrentVerNum = 444;
+    public void SendToServer(SrvLinkBase sLink, byte thrd_ctx, Object message) throws Exception;
 }

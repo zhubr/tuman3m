@@ -34,6 +34,7 @@ public class GeneralDbDistribEvent {
     public final static int ID_MASK = 0x1FFFFFFF;
 
     public final static int IS_MASTER_ONLY = 1;
+    public final static int IS_PUBLISHING = -1;
 
     private int ev_type;
     private String ev_str;
@@ -96,6 +97,14 @@ public class GeneralDbDistribEvent {
 
         ev_type = _ev_type;
         ev_handler = _ev_handler;
+
+    }
+
+    public GeneralDbDistribEvent(int _ev_type, Object _ev_handler, int _ev_int) {
+
+        ev_type = _ev_type;
+        ev_handler = _ev_handler;
+        ev_int = _ev_int;
 
     }
 

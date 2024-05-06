@@ -59,11 +59,12 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
     private ArrayList<TempUGCReqHolder> ExecutingList = new ArrayList<TempUGCReqHolder>();
     private long last_checked = System.currentTimeMillis();
 
-    private final static TunedSrvLinkParsBulkCli tuned_pars_bulkcli = new TunedSrvLinkParsBulkCli(); // YYY
+    private final static TunedSrvLinkParsBulkCli tuned_pars_bulkcli = new TunedSrvLinkParsBulkCli();
 
     private volatile int curr_stage = BUP_STAGE_IDLE;
     private volatile long curr_stage_started = 0;
-    private boolean is_volatile = false, some_was_processed = false; // YYY
+    private boolean is_volatile = false, some_was_processed = false;
+    private String last_reset_date = null; // YYY
 
     private long segmented_Full = 0, segmented_Ofs = 0;
     private int segmented_chunk_size = 0;
@@ -74,13 +75,13 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
 
     private static class TunedSrvLinkParsBulkCli extends SrvLinkBase.TunedSrvLinkPars {
 
-        public void AssignStaticValues() { // YYY
+        public void AssignStaticValues() {
 
             LINK_PARS_LABEL = "bulk cli";
 
-            TUM3_CFG_idle_check_alive_delay = "idle_check_alive_bulk_c"; // YYY
-            TUM3_CFG_max_out_buff_count = "max_out_buff_count_bulk_c"; // YYY
-            TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes_bulk_c"; // YYY
+            TUM3_CFG_idle_check_alive_delay = "idle_check_alive_bulk_c";
+            TUM3_CFG_max_out_buff_count = "max_out_buff_count_bulk_c";
+            TUM3_CFG_min_out_buff_kbytes = "min_out_buff_kbytes_bulk_c";
 
             CONST_OUT_BUFF_COUNT_MAX_default = 6;
             CONST_KEEPALIVE_INTERVAL_SEC_default = 20;
@@ -145,8 +146,8 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
         jo.put(JSON_NAME_function, JSON_FUNC_bup_get_last_list);
         curr_stage = BUP_STAGE_EXPECTING_LAST_LIST;
         curr_stage_started = tmp_now_millis;
-        is_volatile = false; // YYY
-        some_was_processed = false; // YYY
+        is_volatile = false;
+        some_was_processed = false;
         Send_JSON(thrd_ctx, ctx, jo);
     }
 
@@ -180,9 +181,9 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
 
     protected void UplinkConnExtra(byte thrd_ctx, RecycledBuffContext ctx) throws Exception {
 
-        //dbLink.setOtherServerConnected(true); // YYY
-        //ForceSendUserList(thrd_ctx, ctx); // YYY
-        UplinkBulkMgr.setUplink(getDbIndex(), this); // YYY
+        //dbLink.setOtherServerConnected(true);
+        //ForceSendUserList(thrd_ctx, ctx);
+        UplinkBulkMgr.setUplink(getDbIndex(), this);
 
     }
 
@@ -222,13 +223,17 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
                     ShutdownSrvLink(tmp_err_msg);
                 } else {
                     dbLink.BupResetFrom(Tum3Util.BytesToStringRaw(bin_att, att_ofs, att_len));
+                    String tmp_reset_date = dbLink.BupLastResetDate();
+                    if (null != last_reset_date) if (last_reset_date.equals(tmp_reset_date))
+                        throw new Exception("Date <" + tmp_reset_date + "> reoccured, bad sympthom"); // YYY
+                    last_reset_date = tmp_reset_date;
                     BeginSendFile(thrd_ctx, ctx, true);
                 }
                 return;
             }
         } catch (Exception e) {
             Tum3Logger.DoLog(db_name, true, "Unexpected exception in onJSON(): " + Tum3Util.getStackTrace(e));
-            dbLink.setBupVisibleError("Failure fetching at master", "Unexpected exception in onJSON(): " + e.toString());
+            dbLink.setBupVisibleError("Failed pushing from master", "Unexpected exception in onJSON(): " + e.toString());
             throw e;
         }
     }
@@ -257,9 +262,10 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
                 if (null == curr_trnsfr_file) {
                     if (some_was_processed) Tum3Logger.DoLog(db_name, false, "Backup sync: volatile data complete.");
                     is_volatile = false;
-                    some_was_processed = false; // YYY
+                    some_was_processed = false;
                 }
             } else {
+                last_reset_date = null; // YYY
                 if (first_after_search) {
                     dbLink.setBupVisibleStatus("Done all raw");
                     if (some_was_processed) Tum3Logger.DoLog(db_name, false, "Backup sync: raw data complete.");
@@ -267,7 +273,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
                     TryStartSynWork();
                 } else {
                     //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG BeginSendFile: raw files one portion was finished.");
-                    GetServLastList(thrd_ctx, ctx, System.currentTimeMillis()); // YYY
+                    GetServLastList(thrd_ctx, ctx, System.currentTimeMillis());
                     return;
                 }
             }
@@ -288,7 +294,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
             if (segmented_Full > 0) {
                 long tmp_seg_count = (segmented_Full + seg_limit - 1) / seg_limit;
                 segmented_chunk_size = (int)((segmented_Full + tmp_seg_count - 1) / tmp_seg_count);
-            } else segmented_chunk_size = 0; // YYY
+            } else segmented_chunk_size = 0;
             if (segmented_chunk_size > seg_limit) segmented_chunk_size = seg_limit;
             if (segmented_chunk_size <= 0) segmented_chunk_size = seg_limit;
 
@@ -306,8 +312,8 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
                 dbLink.setBupVisibleError("Blocked by bogus clock", "Volatile backup sync is blocked by bogus clock setting");
                 tmp_do_volatile = false;
             } else {
-                is_volatile = true; // YYY
-                some_was_processed = false; // YYY
+                is_volatile = true;
+                some_was_processed = false;
                 curr_trnsfr_file = dbLink.BupNextToSend();
             }
         }
@@ -319,7 +325,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
 
         long tmp_seg_size = segmented_Full - segmented_Ofs;
         if (tmp_seg_size > segmented_chunk_size) tmp_seg_size = segmented_chunk_size;
-        if (tmp_seg_size < 0) throw new Exception("Internal error: tmp_seg_size=" + tmp_seg_size); // YYY
+        if (tmp_seg_size < 0) throw new Exception("Internal error: tmp_seg_size=" + tmp_seg_size);
         int tmp_this_trace_len = (int)tmp_seg_size;
         boolean tmp_is_last_seg = (segmented_Ofs + tmp_seg_size) >= segmented_Full; // segmented_data.IsLastSegment()
         tmpBuff.SetSegment(segmented_Ofs, tmp_this_trace_len, tmp_is_last_seg);
@@ -349,7 +355,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
                     if (tmp_delta_t < (int)tmp_expected_millis) {
                         int tmp_sleep_ms = (int)tmp_expected_millis - (int)tmp_delta_t;
                         if (tmp_sleep_ms > 2000) tmp_sleep_ms = 2000; // Should not sleep too long.
-                        Tum3Util.SleepExactly(tmp_sleep_ms); // YYY
+                        Tum3Util.SleepExactly(tmp_sleep_ms);
                     }
                 }
                 ratelim_bytes = 0;
@@ -371,7 +377,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
         }
 
         curr_stage = BUP_STAGE_EXPECTING_UPL_RESULT;
-        curr_stage_started = tmp_curr_millis; // YYY
+        curr_stage_started = tmp_curr_millis;
     }
 
     @Override
@@ -397,7 +403,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
 
         if (super.CancelLinkIntrnl()) return true;
 
-        //dbLink.setOtherServerConnected(false); // YYY
+        //dbLink.setOtherServerConnected(false);
 
         CleanupFileHandle(true);
 
@@ -472,7 +478,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
                 //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: shot_name=" + curr_trnsfr_file.ShotName() + " file_name=" + curr_trnsfr_file.FileName() + " HFullSize=" + curr_trnsfr_file.getFullSizeX() + " wrote to HSegOffset=" + HSegOffset + " successfully.");
 
                 if (HSegOffset >= curr_trnsfr_file.getFullSizeX()) {
-                    some_was_processed = true; // YYY
+                    some_was_processed = true;
                     if (is_volatile) dbLink.BupVolFileSuccess(tmp_shot_name, tmp_file_name, 0 == curr_trnsfr_file.getFullSizeX());
                     BeginSendFile(thrd_ctx, ctx, false);
                 } else ContinueSendFile(thrd_ctx, ctx);
@@ -486,7 +492,7 @@ public class SrvLinkBulkCli extends SrvLinkIntercon implements UplinkBulkMgr.Upl
 
     protected void ExecuteReq(byte thrd_ctx, byte req_code, byte[] req_body, int req_trailing_len) throws Exception {
 
-        if (REQUEST_TYPE_FPART_CNFRM == req_code) Process_BupFileUpResult(thrd_ctx, null, req_body, req_trailing_len); // YYY
+        if (REQUEST_TYPE_FPART_CNFRM == req_code) Process_BupFileUpResult(thrd_ctx, null, req_body, req_trailing_len);
         else super.ExecuteReq(thrd_ctx, req_code, req_body, req_trailing_len);
 
     }

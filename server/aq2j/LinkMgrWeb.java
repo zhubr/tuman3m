@@ -35,14 +35,12 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
     private final static int INTRL_SOCK_FULL = 1;
     private final static int INTRL_DATA_FULL = 2;
 
-    //private int db_index;
-    //private String db_name;
     SessionProducerWeb session_producer;
 
 
     private static class ServerReader extends Thread implements ClientWriter {
 
-        private SrvLinkBase sLink;
+        //private SrvLinkBase sLink;
         private LinkMgrWeb parentStreamer;
         private ClientWriterRaw raw_writer;
         private volatile byte[] tmpInputBuff;
@@ -54,11 +52,11 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
         private Object WaitObj = new Object();
 
 
-        public ServerReader(SessionProducerWeb _session_producer, LinkMgrWeb f, SrvLinkBase l, ClientWriterRaw _o_raw) {
-            sLink = l;
+        public ServerReader(SessionProducerWeb _session_producer, LinkMgrWeb f, ClientWriterRaw _o_raw) {
+            //sLink = l;
             raw_writer = _o_raw;
             parentStreamer = f;
-            tmpInputBuff = new byte[_session_producer.get_CONST_WS_BUFF_SIZE() /* CONST_WS_BUFF_SIZE[_db_idx] */];
+            tmpInputBuff = new byte[_session_producer.get_CONST_WS_BUFF_SIZE()];
             msgBb = ByteBuffer.wrap(tmpInputBuff);
             this.setDaemon(true);
             this.start();
@@ -186,6 +184,7 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
     }
 
     private SrvLinkBase sLink = null;
+    private final ManagedBufProcessor mng_buf_processor; // YYY
     private ServerReader srv_reader = null;
     private ClientWriterRaw o_raw;
     public boolean ready_local = false;
@@ -198,19 +197,23 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
     private Object input_stuck_blocker = new Object();
     private int input_queue_size = 0, input_queue_count = 0;
 
-    private final static String TUM3_CFG_max_inp_buff_kbytes = "max_inp_buff_kbytes";
-    //private final static int CONST_MAX_INP_BUFF_KBYTES_default = 1;
-    //private volatile static int CONST_MAX_INP_BUFF_BYTES = 0;
     private final static int CONST_MAX_INP_OOB_CHARS = 16;
     private final static int CONST_INPUT_INTERMED_BYTES_LIMIT = 32*1024*1024; // XXX Test and tune.
     private final static int CONST_INPUT_INTERMED_MSGS_LIMIT = 400; // XXX Test and tune.
 
     private String transp_caller = "", transp_user = "", transp_agent = "";
+    private final boolean oob_supported; // YYY
 
-    public LinkMgrWeb(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw, SelectedHttpHeaders http_headers)
+    public LinkMgrWeb(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw, SelectedHttpHeaders http_headers) {
+        this(_session_producer, _o_raw, http_headers, true, null);
+    }
+
+    public LinkMgrWeb(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw, SelectedHttpHeaders http_headers, boolean _oob_supported, ManagedBufProcessor _mng_buf_processor)
     {
         // "x-real-ip", "x-real-port", "x-real-user", "user-agent"
         session_producer = _session_producer; // YYY
+        oob_supported = _oob_supported; // YYY
+        mng_buf_processor = _mng_buf_processor; // YYY
         //db_index = _db_idx;
         //db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
         if (null != http_headers) {
@@ -226,11 +229,6 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
             transp_user = ((SessionProducerWebBulkCli)_session_producer).getUserName(); // YYY
         }
         //System.out.println("[aq2j] DEBUG: tmp_ip=" + tmp_ip + " tmp_port=" + tmp_port + " tmp_user=" + tmp_user + " tmp_agent=" + tmp_agent);
-        //if (0 == CONST_MAX_INP_BUFF_BYTES) {
-        //    CONST_MAX_INP_BUFF_BYTES = 1024 * Tum3cfg.getIntValue(db_index, true, TUM3_CFG_max_inp_buff_kbytes, CONST_MAX_INP_BUFF_KBYTES_default);
-        //    Tum3Logger.DoLog(session_producer.getLogPrefixName(), false, "DEBUG: CONST_MAX_INP_BUFF_BYTES=" + CONST_MAX_INP_BUFF_BYTES);
-        //}
-        //CONST_MAX_INP_BUFF_BYTES = session_producer.CONST_MAX_INP_BUFF_BYTES();
         o_raw = _o_raw;
         sLink = session_producer.newSrvLink(this); // new SrvLink(_db_idx, this);
         this.start();
@@ -238,19 +236,19 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
 
     public String get_transp_caller() { return transp_caller; }
 
+    public void set_transp_caller(String new_caller) { } // YYY
+
     public String get_transp_user() { return transp_user; }
+
+    public void set_transp_user(String new_user) { } // YYY
 
     public String get_transp_agent() { return transp_agent; }
 
     public String get_transp_title() { return "ws"; }
 
-    //public boolean SingleThread() {
-    //  return false;
-    //}
-
 
     public boolean SupportOOB() {
-        return true;
+        return oob_supported; // true; // YYY
     }
 
     private void SetTerminate(String reason) {
@@ -259,6 +257,15 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
             is_terminating = true;
             if (terminating_reason.isEmpty()) terminating_reason = reason;
             input_blocker.notify();
+        }
+
+    }
+
+    public String getShutdownReason() { // YYY
+
+        synchronized(input_blocker) {
+            if (terminating_reason.isEmpty()) return "Reason unknown";
+            return terminating_reason;
         }
 
     }
@@ -316,14 +323,20 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
 
     private class Msg_ReadFromClient extends NetMsgSized {
 
-        private ByteBuffer message;
+        private final Object message;
+        private final int msg_size;
 
         public Msg_ReadFromClient(ByteBuffer _message) {
+            this(_message, 0);
+        }
+
+        public Msg_ReadFromClient(Object _message, int _msg_size) {
             message = _message;
+            msg_size = _msg_size; // YYY
         }
 
         public int getSize() {
-            return message.remaining();
+            return (message instanceof ByteBuffer) ? ((ByteBuffer)message).remaining() : msg_size; // YYY
         }
 
         public void DoHandle(LinkMgrWeb sender) throws Exception {
@@ -334,8 +347,14 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
     public void ReadFromClient(ByteBuffer message) throws Exception {
         post(new Msg_ReadFromClient(message));
     }
-    private void Do_ReadFromClient(ByteBuffer message) throws Exception {
-        sLink.SendToServer(SrvLinkBase.THRD_INTERNAL, message);
+    public void ReadFromClient(Object message, int msg_size) throws Exception {
+        post(new Msg_ReadFromClient(message, msg_size));
+    }
+    private void Do_ReadFromClient(Object message) throws Exception {
+        if (message instanceof ByteBuffer)
+            sLink.SendToServer(SrvLinkBase.THRD_INTERNAL, (ByteBuffer)message);
+        else
+            mng_buf_processor.SendToServer(sLink, SrvLinkBase.THRD_INTERNAL, message); // YYY
     }
 
     public void post(NetMsgSized msg) { // XXX FIXME!!! Provide some interrupter callback for the waiting case!
@@ -418,7 +437,7 @@ public class LinkMgrWeb extends Thread implements SrvLinkOwner, AppStopHook {
         try {
 
             //System.out.println("[aq2j] DEBUG: Opening communication.");
-            srv_reader = new ServerReader(session_producer, this, sLink, o_raw);
+            srv_reader = new ServerReader(session_producer, this, o_raw);
 
             boolean tmp_data_pending = false;
 

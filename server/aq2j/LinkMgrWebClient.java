@@ -21,7 +21,12 @@ public class LinkMgrWebClient extends LinkMgrWeb {
 
     public LinkMgrWebClient(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw)
     {
-        super (_session_producer, _o_raw, null);
+        this(_session_producer, _o_raw, true, null);
+    }
+
+    public LinkMgrWebClient(SessionProducerWeb _session_producer, ClientWriterRaw _o_raw, boolean _oob_supported, ManagedBufProcessor _mng_buf_processor)
+    {
+        super(_session_producer, _o_raw, null, _oob_supported, _mng_buf_processor);
     }
 
 }

@@ -19,12 +19,15 @@ import java.nio.file.*;
 import java.nio.file.attribute.*;
 
 import aq2net.Tum3Broadcaster;
+import aq2net.GeneralDbDistribEvent;
 
 public class Tum3Db implements Runnable, AppStopHook {
 
     public  final static String CONST_MSG_READONLY_NOW = "The database is read-only at this time";
     public  final static String CONST_MSG_ACCESS_DENIED = "Access denied";
     public  final static String CONST_MSG_INV_SHOT_NUMBER = "Raw data can be stored for current date only";
+    public  final static String CONST_MSG_SRVLINK_ERR01 = "The specified shot name was not found";
+    public  final static String CONST_MSG_SRVLINK_ERR02 = "Internal error locating shot name";
     private volatile boolean TerminateRequested = false;
     private Thread db_thread;
 
@@ -36,6 +39,9 @@ public class Tum3Db implements Runnable, AppStopHook {
     private final static int CONST_SYNC_SHOTS_ONCE_LIMIT = 999; // YYY
     private static final int MIN_SYNDIR_CLEANUP_MINUTES = 60; // YYY
     private static final int DAY_SYNDIR_CLEANUP_MINUTES = 60 * 24; // YYY
+
+    private static final boolean DEBUG_ON_WIN = false; // Debugging only. winxp does not implement symlinks well.
+    private static final boolean DEBUG_MEM_USAGE = false; // YYY
 
     private static final String FSUFF_FLAGPREP = ".801"; // YYY
     public static final String FSUFF_FLAGDONE = ".800"; // YYY
@@ -58,7 +64,9 @@ public class Tum3Db implements Runnable, AppStopHook {
     private int CONST_SHOTS_DISPOSE_AFTER = 30;   // Seconds
     private int CONST_SHOTS_MAX_OPEN = 100;
     private final static String TUM3_CFG_db_root_volatile = "db_root_volatile";
-    private final static String TUM3_CFG_sync_state_root = "sync_state_root"; // YYY
+    private final static String TUM3_CFG_published_root = "published_root"; // YYY
+    private final static String TUM3_CFG_published_root_volatile = "published_root_volatile"; // YYY
+    private final static String TUM3_CFG_sync_state_root = "sync_state_root";
     private final static String TUM3_CFG_max_shots_open = "max_shots_open";
     private final static String TUM3_CFG_unused_shot_close_delay = "unused_shot_close_delay";
     private final static String TUM3_CFG_master_db = "master_db";
@@ -68,10 +76,13 @@ public class Tum3Db implements Runnable, AppStopHook {
     private static Tum3Db[] DbInstance = null;
     private static Object DbCreationLock = new Object();
     private String DB_ROOT_PATH, DB_ROOT_PATH_VOL;
+    private String PUBLISHED_ROOT_PATH, PUBLISHED_ROOT_PATH_VOL; // YYY
+    private String DB_REL_ROOT_PATH, DB_REL_ROOT_PATH_VOL; // YYY
     public final String SYNC_STATE_PATH; // YYY
-    private StringList MasterList = null;
+    private StringList MasterList[] = new StringList[2]; // YYY
     private Object MasterListLock = new Object(), PostCreationLock = new Object();
     private boolean creation_complete = false;
+    private volatile boolean HaveFilterMode = false; // YYY
     private String FAutoCreatedMonthDir = ""; // YYY
     public final boolean downbulk_enabled, upbulk_enabled; // YYY
 
@@ -80,10 +91,10 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     private int db_index;
     private String db_name, masterdb_name;
-    public final boolean isWriteable, withSyncState; // YYY
+    public final boolean isWriteable, withSyncState;
     private Tum3Db master_db = null;
-    private Tum3UgcWorker ugc_worker = null; // YYY
-    private volatile boolean IsWaitingTrig = false; // YYY
+    private Tum3UgcWorker ugc_worker = null;
+    private volatile boolean IsWaitingTrig = false;
 
     private Object diag_lock = new Object(); // YYY
     private int diag_free_space_gb = 0; // YYY
@@ -121,6 +132,7 @@ public class Tum3Db implements Runnable, AppStopHook {
     private volatile String bup_sync_error_time = ""; // YYY
     private volatile String bup_last_shot_in_continuator = ""; // YYY
     private volatile String bup_last_strange_shot = ""; // YYY
+    private volatile String bup_last_reset_date = ""; // YYY
     private volatile boolean bup_in_volatile; // YYY
     private volatile boolean bup_syn_strange_count_finished = false; // YYY
     private volatile long bup_sync_status_push = 0; // YYY
@@ -267,6 +279,41 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    public static class SingleShotWriteHelper implements ShotChangeMonitor { // YYY
+
+        private String curr_name;
+        private ArrayList<Integer> curr_modified_ids = new ArrayList<Integer>(), curr_removed_ids = new ArrayList<Integer>();
+
+
+        public SingleShotWriteHelper(String _curr_name) {
+
+            curr_name = _curr_name;
+
+        }
+
+        public void AddUpdatedId(int _id, boolean _hurry, boolean _was_waiting, boolean _was_removed) throws Exception {
+
+            if (_was_removed) {
+                curr_removed_ids.add(_id);
+            } else {
+                if (_was_waiting) _id |= GeneralDbDistribEvent.ID_WAS_WAITING;
+                curr_modified_ids.add(_id); // XXX TODO. Maybe check if already included?
+            }
+        }
+
+        public void PushModifiedIds(Tum3Db _origin_db) {
+
+            if (curr_modified_ids.size() > 0) {
+                Tum3Broadcaster.DistributeGeneralEvent(_origin_db, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_TRACEUPD_ARR, curr_name, curr_modified_ids), null); // Note: using "myself" prevents proper updates in aq2net client+server mode!
+                curr_modified_ids.clear();
+            }
+            if (curr_removed_ids.size() > 0) {
+                Tum3Broadcaster.DistributeGeneralEvent(_origin_db, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_TRACEDEL_ARR, curr_name, curr_removed_ids), null);
+                curr_removed_ids.clear();
+            }
+        }
+
+    }
 
     protected Tum3Db(int _db_idx, String _masterdb_name) {
 
@@ -285,6 +332,7 @@ public class Tum3Db implements Runnable, AppStopHook {
         closingShots = new HashMap<String, Tum3Shot>();
         DB_ROOT_PATH = Tum3cfg.getParValue(db_index, false, Tum3cfg.TUM3_CFG_db_root);
         DB_ROOT_PATH_VOL = Tum3cfg.getParValue(db_index, false, TUM3_CFG_db_root_volatile);
+
         SYNC_STATE_PATH = Tum3cfg.getParValue(db_index, false, TUM3_CFG_sync_state_root); // YYY
         writeprotect_storage = (0 != Tum3cfg.getIntValue(db_index, true, TUM3_CFG_writeprotect_storage, 0)); // YYY
         enable_sync_raw = (0 != Tum3cfg.getIntValue(db_index, false, TUM3_CFG_enable_sync_raw, 0)); // YYY
@@ -308,11 +356,91 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    private static String CalcRelativePath(String _storage_root_path, String _symlink_root_path) { // YYY
+    // Find representation of _storage_path relative to _symlink_path.
+    // Example:
+    // _storage_root_path /opt/aq2j/data/
+    // _symlink_root_path /opt/aq2j/published/
+
+        int tmp_cmn_len = _storage_root_path.length();
+        if (tmp_cmn_len > _symlink_root_path.length())
+            tmp_cmn_len = _symlink_root_path.length();
+
+        int tmp_last_sep = -1;
+        for (int tmp_i = 0; tmp_i < tmp_cmn_len;) {
+            if (_storage_root_path.charAt(tmp_i) == _symlink_root_path.charAt(tmp_i)) {
+                if (('\\' == _storage_root_path.charAt(tmp_i)) || ('/' == _storage_root_path.charAt(tmp_i))) tmp_last_sep = tmp_i;
+                tmp_i++;
+            } else break;
+        }
+        if (tmp_last_sep < 2) return _storage_root_path; // Common prefix too small, unlikely relative path would make sense.
+
+        String tmp_storage_ending = _storage_root_path.substring(tmp_last_sep+1);
+        String tmp_symlink_ending = _symlink_root_path.substring(tmp_last_sep+1);
+
+        int tmp_dir_depth = 0;
+        for (int tmp_i = 0; tmp_i < tmp_symlink_ending.length(); tmp_i++)
+            if (('\\' == tmp_symlink_ending.charAt(tmp_i)) || ('/' == tmp_symlink_ending.charAt(tmp_i))) tmp_dir_depth++;
+
+        StringBuilder tmp_rel_prefix = new StringBuilder();
+        for (int tmp_i = 0; tmp_i <= tmp_dir_depth; tmp_i++)
+            tmp_rel_prefix.append(".." + File.separator);
+
+        //Tum3Logger.DoLog("[DEBUG]", false, "[DEBUG] <" + tmp_rel_prefix.toString() + tmp_storage_ending + ">");
+        return tmp_rel_prefix.toString() + tmp_storage_ending;
+
+    }
+
+    private static boolean PathLooksGood(String _the_path) {
+
+        if (null == _the_path) return true;
+        if (_the_path.isEmpty()) return true;
+
+        char tmp_last = _the_path.charAt(_the_path.length()-1);
+        boolean first_ok;
+        if (File.separatorChar == '\\') { // Windows-style
+            if (_the_path.length() < 3) first_ok = false;
+            else {
+                char tmp_drive = _the_path.charAt(0);
+                char tmp_colon = _the_path.charAt(1);
+                char tmp_first = _the_path.charAt(2);
+                first_ok = (tmp_drive == '\\') || ((tmp_colon == ':') && ((tmp_first == '/') || (tmp_first == '\\')));
+            }
+        } else { // Regular
+            char tmp_first = _the_path.charAt(0);
+            first_ok = (tmp_first == '/') || (tmp_first == '\\');
+        }
+        return first_ok && ((tmp_last == '/') || (tmp_last == '\\'));
+
+    }    
+
     private void FinishCreation() {
 
         synchronized(PostCreationLock) {
             if (!creation_complete) {
                 creation_complete = true;
+
+                PUBLISHED_ROOT_PATH = Tum3cfg.getParValue(db_index, false, TUM3_CFG_published_root); // YYY
+                PUBLISHED_ROOT_PATH_VOL = Tum3cfg.getParValue(db_index, false, TUM3_CFG_published_root_volatile); // YYY
+
+                if (!PathLooksGood(DB_ROOT_PATH))
+                    Tum3Logger.DoLog(db_name, true, "IMPORTANT! Data path should start and end with filesystem separator character.");
+                if (!PathLooksGood(DB_ROOT_PATH_VOL))
+                    Tum3Logger.DoLog(db_name, true, "IMPORTANT! Data volatile path should start and end with filesystem separator character.");
+                if (!PathLooksGood(PUBLISHED_ROOT_PATH))
+                    Tum3Logger.DoLog(db_name, true, "IMPORTANT! Published data path should start and end with filesystem separator character.");
+                if (!PathLooksGood(PUBLISHED_ROOT_PATH_VOL))
+                    Tum3Logger.DoLog(db_name, true, "IMPORTANT! Published volatile data volatile path should start and end with filesystem separator character.");
+
+                DB_REL_ROOT_PATH = CalcRelativePath(DB_ROOT_PATH, PUBLISHED_ROOT_PATH); // YYY
+                DB_REL_ROOT_PATH_VOL = CalcRelativePath(DB_ROOT_PATH_VOL, PUBLISHED_ROOT_PATH_VOL); // YYY
+
+                HaveFilterMode = !PUBLISHED_ROOT_PATH.isEmpty();
+                if (HaveFilterMode) if (PUBLISHED_ROOT_PATH_VOL.isEmpty() != DB_ROOT_PATH_VOL.isEmpty()) {
+                    HaveFilterMode = false;
+                    Tum3Logger.DoLog(db_name, true, "Volatile data path setting for main and published db looks inconsistent, disabling published mode.");
+                }
+
                 ugc_worker = Tum3UgcWorker.getUgcWorker(this); // YYY
                 Tum3Logger.DoLog(db_name, false, "Starting the database (data_path=" + DB_ROOT_PATH + ", data_path_volatile=" + DB_ROOT_PATH_VOL + ")" + (isWriteable? " as writable" : " as read-only"));
                 Tum3Logger.DoLog(db_name, false, "DEBUG: CONST_SHOTS_MAX_OPEN=" + CONST_SHOTS_MAX_OPEN);
@@ -335,6 +463,35 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    private static final String getHostMemUsage() {
+        try {
+            File tmp_proc_self = new File("/proc/self/statm");
+                                        // 13607 5827 1162 213 0 4830 0
+                                        //       ^^^^
+            if (tmp_proc_self.exists()) {
+                FileInputStream tmp_stream = null;
+                try {
+                    tmp_stream = new FileInputStream(tmp_proc_self);
+                    byte[] buf_b = new byte[256];
+                    int numRead = tmp_stream.read(buf_b);
+                    String readData = Tum3Util.BytesToStringRaw(buf_b, 0, numRead);
+                    String[] tmp_values = readData.split(" ");
+                    if (tmp_values.length > 4) {
+                        try {
+                            int tmp_kb = Integer.parseInt(tmp_values[1]);
+                            return "" + (tmp_kb*4);
+                        } catch (Exception ignored) {}
+                    }
+                    return "?";
+                } finally {
+                    if (null != tmp_stream) tmp_stream.close();
+                }
+            } else return "?";
+        } catch (Exception ignored) {
+            return "err";
+        }
+    }
+
     public void run() {
 
         AppStopHooker.AddHook(this);
@@ -345,7 +502,10 @@ public class Tum3Db implements Runnable, AppStopHook {
             } catch (InterruptedException e) { }
             DisposeUnusedShots(false);
             if (!TerminateRequested) {
-                //System.gc(); Tum3Logger.DoLog(db_name, true, "rtFree " + (Runtime.getRuntime().freeMemory() >>> 10) + " kB/" + "rtTotal " + (Runtime.getRuntime().totalMemory() >>> 10) + " kB");
+                if (DEBUG_MEM_USAGE) { // YYY
+                    System.gc();
+                    Tum3Logger.DoLog(db_name, true, "rtFree " + (Runtime.getRuntime().freeMemory() >>> 10) + " kB/" + "rtTotal " + (Runtime.getRuntime().totalMemory() >>> 10) + " kB; OS=" + getHostMemUsage() + " kB"); // YYY
+                }
                 long curr_millis = System.currentTimeMillis();
                 if (curr_millis >= diag_next_update) {
                     UpdateThisServerInfo(curr_millis); // YYY
@@ -375,31 +535,48 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    private final static int Published2Filter(boolean published_only) {
+
+        if (published_only) return 1;
+        else return 0;
+
+    }
+
+    private final static boolean Filter2Published(int _filtermode) {
+
+        if (0 == _filtermode) return false;
+        else return true;
+
+    }
+
     private void LoadMasterList() throws Exception {
 
         synchronized (MasterListLock) {
 
-            if (MasterList != null) return;
+            for (int tmp_filtermode = 0; tmp_filtermode <= 1; tmp_filtermode++) if (MasterList[tmp_filtermode] == null) { // YYY
 
-            //System.out.println("[DEBUG] Creating masterlist in " + db_name);
-            MasterList = new StringList();
-            StringList tmp_list = GetRawRootDir(); // new StringList(); // YYY
+                //System.out.println("[DEBUG] Creating masterlist in " + db_name);
+                StringList tmp_out_list = new StringList();
+                StringList tmp_list = GetRawRootDir(Filter2Published(tmp_filtermode)); // new StringList(); // YYY
 
-            if (null != master_db) {
-                //System.out.println("[DEBUG] Adding masterlist from " + master_db.db_name);
-                master_db.LoadMasterList();
-                for (int tmp_i=0; tmp_i < master_db.MasterList.size(); tmp_i++) {
-                    String tmp_name = master_db.MasterList.get(tmp_i);
-                    tmp_name = YearExtend_Intl(tmp_name);
-                    //System.out.println("[DEBUG] masterlist: " + tmp_name + " ?");
-                    if (tmp_list.indexOf(tmp_name) < 0)
-                        tmp_list.add(tmp_name);
+                if (null != master_db) {
+                    //System.out.println("[DEBUG] Adding masterlist from " + master_db.db_name);
+                    master_db.LoadMasterList();
+                    for (int tmp_i=0; tmp_i < master_db.MasterList[0].size(); tmp_i++) {
+                        String tmp_name = master_db.MasterList[0].get(tmp_i);
+                        tmp_name = YearExtend_Intl(tmp_name);
+                        //System.out.println("[DEBUG] masterlist: " + tmp_name + " ?");
+                        if (tmp_list.indexOf(tmp_name) < 0)
+                            tmp_list.add(tmp_name);
+                    }
                 }
-            }
 
-            Collections.sort(tmp_list);
-            for (int tmp_i=0; tmp_i < tmp_list.size(); tmp_i++)
-                MasterList.add(tmp_list.get(tmp_i).substring(2));
+                Collections.sort(tmp_list);
+                for (int tmp_i=0; tmp_i < tmp_list.size(); tmp_i++)
+                    tmp_out_list.add(tmp_list.get(tmp_i).substring(2));
+
+                MasterList[tmp_filtermode] = tmp_out_list;
+            }
         }
     } 
 
@@ -505,7 +682,6 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
-
     private static String IncShotStr(String the_suff) throws Exception {
 
         the_suff = the_suff.toUpperCase();
@@ -520,7 +696,7 @@ public class Tum3Db implements Runnable, AppStopHook {
             if (tmp_st[tmp_i] == '9') {
                 tmp_st[tmp_i] = '0';
                 if (tmp_i > 0) tmp_i--;
-                else if (tmp_j < 3) tmp_out.append("1");
+                else if (tmp_j < 3) { tmp_out.append("1"); break; } // YYY
                 else throw new Exception("Shot numbering overflow at " + the_suff);
             } else {
                 tmp_st[tmp_i]++;
@@ -557,17 +733,18 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
-    private StringList GetRawSubdir(String tmpSubdirName, boolean _days_only) {
+    private StringList GetRawSubdir(boolean published_only, String tmpSubdirName, boolean _days_only) {
 
         StringList tmp_list = new StringList();
-        if (DB_ROOT_PATH.length() > 0) {
-            File dir = new File(DB_ROOT_PATH + tmpSubdirName + File.separator);
+        String tmp_actual_root = published_only ? PUBLISHED_ROOT_PATH : DB_ROOT_PATH; // YYY
+        if (tmp_actual_root.length() > 0) {
+            File dir = new File(tmp_actual_root + tmpSubdirName + File.separator);
             File tmp_files[] = dir.listFiles();
 //Tum3Util.SleepExactly(3000);
             //System.out.println("[DEBUG] + tmpSubdirName=" + tmpSubdirName);
             if (null == tmp_files) {
                 // Reminder: the directory is empty or non-existent at this time. Assume there are no files in it anyway.
-                //String tmp_emsg = "WARNING: index " + MasterIndex + " somehow contains unusable directory <" + tmpSubdirName + "> in GetThisDir()";
+                //String tmp_emsg = "WARNING: index " + MasterIndex + " somehow contains unusable directory <" + tmpSubdirName + "> in GetRawSubdir()";
                 //Tum3Logger.DoLog(db_name, true, tmp_emsg);
                 //throw new Exception(tmp_emsg);
             } else for (File file: tmp_files) {
@@ -589,22 +766,24 @@ public class Tum3Db implements Runnable, AppStopHook {
         return tmp_list;
     }
 
-    private StringList GetThisDir(int MasterIndex) throws Exception {
+    private StringList GetThisDir(boolean published_only, int MasterIndex) throws Exception {
+        
+        int tmp_filtermode = Published2Filter(published_only); // YYY
 
-        if ((MasterIndex < 1) || (MasterIndex > MasterList.size())) {
+        if ((MasterIndex < 1) || (MasterIndex > MasterList[tmp_filtermode].size())) {
             Tum3Logger.DoLog(db_name, true, "WARNING: index " + MasterIndex + " is out of range in GetThisDir()");
             return new StringList();
         }
 
-        String tmpSubdirName = MasterList.get(MasterIndex-1);
-        StringList tmp_list = GetRawSubdir(tmpSubdirName, false);
+        String tmpSubdirName = MasterList[tmp_filtermode].get(MasterIndex-1);
+        StringList tmp_list = GetRawSubdir(published_only, tmpSubdirName, false);
 
         if (null != master_db) {
             StringList tmp_master_sublist = null;
             synchronized (master_db.MasterListLock) {
-                int tmp_j = master_db.MasterList.indexOf(tmpSubdirName);
+                int tmp_j = master_db.MasterList[0].indexOf(tmpSubdirName);
                 if (tmp_j >= 0)
-                    tmp_master_sublist = master_db.GetRawSubdir(tmpSubdirName, false);
+                    tmp_master_sublist = master_db.GetRawSubdir(false, tmpSubdirName, false);
             }
             if (null != tmp_master_sublist)
                 for (int tmp_i = 0; tmp_i < tmp_master_sublist.size(); tmp_i++) {
@@ -613,7 +792,8 @@ public class Tum3Db implements Runnable, AppStopHook {
                         tmp_list.add(tmp_st);
                 }
         }
-        Collections.sort(tmp_list);
+        tmp_list.SortAsShots(); // Collections.sort(tmp_list); // YYY
+        //System.out.print("[DEBUG] "); for (int tmp_ii = 0; tmp_ii < tmp_list.size(); tmp_ii++) System.out.print(tmp_list.get(tmp_ii) + " "); System.out.println(" ");
         return tmp_list;
     }
 
@@ -641,7 +821,7 @@ public class Tum3Db implements Runnable, AppStopHook {
             }
         }
 
-        Collections.sort(tmp_list);
+        tmp_list.SortAsShots(); // Collections.sort(tmp_list); // YYY
         StringBuilder tmp_res = new StringBuilder();
 
         for (String tmp_shot: tmp_list) {
@@ -784,8 +964,9 @@ public class Tum3Db implements Runnable, AppStopHook {
     }
 
     private String getLastDay(String tmpSubdirName) {
+    // Note. This always operate unfiltered!
 
-        StringList tmp_list = GetRawSubdir(tmpSubdirName, true);
+        StringList tmp_list = GetRawSubdir(false, tmpSubdirName, true);
 
         if (tmp_list.size() <= 0) return "";
         Collections.sort(tmp_list);
@@ -795,15 +976,15 @@ public class Tum3Db implements Runnable, AppStopHook {
         if (tmp_list.size() > 1) tmp_prev_day = tmp_list.get(tmp_list.size() - 2);
         //System.out.println("[aq2j] DEBUG: tmp_last_day=<" + tmp_last_day + "> tmp_prev_day=<" + tmp_prev_day + ">");
 
-        String tmp_res = getFilesForDay(tmpSubdirName, tmp_last_day);
+        String tmp_res = getFilesForDay(tmpSubdirName, tmp_last_day); // Reminder: as soon as some raw data was already transfered to backup for a date, it means all revious days were 100% finished already.
         if (tmp_res.isEmpty() && !tmp_prev_day.isEmpty()) tmp_res = getFilesForDay(tmpSubdirName, tmp_prev_day);
 
         return tmp_res;
     }
 
-    private StringList GetRawRootDir() throws Exception {
+    private StringList GetRawRootDir(boolean published_only) throws Exception {
 
-        return GetAnyRootDir(DB_ROOT_PATH);
+        return GetAnyRootDir((published_only && HaveFilterMode) ? PUBLISHED_ROOT_PATH : DB_ROOT_PATH);
 
     }
 
@@ -902,13 +1083,19 @@ public class Tum3Db implements Runnable, AppStopHook {
         return tmp_str;
     }
 
+    public String BupLastResetDate() {
+
+        return bup_last_reset_date;
+
+    }
+
     public void BupResetFrom(String _bup_string) throws Exception {
 
         // 230419/15:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0;17:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0,0013=0,0021=0,0022=0
         //System.out.println("[aq2j] DEBUG: tmp_body='" + tmp_body + "'");
 
         //if (true) throw new Exception("Test exceptn 2");
-        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: _bup_string='" + _bup_string + "'");
+        //Tum3Logger.DoLog(db_name, false, "[DEBUG] _bup_string='" + _bup_string + "'");
 
         if (BupErrorPresent()) return;
 
@@ -919,6 +1106,7 @@ public class Tum3Db implements Runnable, AppStopHook {
         bup_start_subdir = "";
         bup_start_day = "";
         bup_start_done_list.clear();
+        bup_last_reset_date = ""; // YYY
         if (!_bup_string.isEmpty()) {
             String tmpSubdirName = "", tmpDay = "";
             if (_bup_string.length() < 7) {
@@ -931,6 +1119,7 @@ public class Tum3Db implements Runnable, AppStopHook {
             }
             tmpSubdirName = _bup_string.substring(0, 4);
             tmpDay = _bup_string.substring(4, 6);
+            bup_last_reset_date = tmpSubdirName + tmpDay; // YYY
             if (!Tum3Util.StrNumeric(tmpSubdirName) || !Tum3Util.StrNumeric(tmpDay)) {
                 setBupVisibleError("Unexpected uplink reply (c)", "Uplink listing not recognized (c)");
                 return;
@@ -970,41 +1159,74 @@ public class Tum3Db implements Runnable, AppStopHook {
 
         //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_sync_error_long=<" + bup_sync_error_long + "> bup_start_subdir=<" + bup_start_subdir + "> bup_start_day=<" + bup_start_day + "> bup_start_done_list='" + bup_start_done_list + "'");
 
-        StringList tmp_list = GetRawRootDir();
+        StringList tmp_list = GetRawRootDir(false);
         StringList tmp_shot_list = new StringList();
         Collections.sort(tmp_list);
 
         //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_start_subdir='" + bup_start_subdir + "' bup_start_day='" + bup_start_day + "'");
+        StringList tmp_day_shot_list = new StringList(); // YYY
+        String tmp_check_last_day = ""; // YYY
+        boolean tmp_day_switched = false; // YYY
         for (int tmp_i = 0; tmp_i < tmp_list.size(); tmp_i++) if (bup_start_subdir.isEmpty() || (bup_start_subdir.compareTo(tmp_list.get(tmp_i)) <= 0)) {
 
             String tmpSubdirName = tmp_list.get(tmp_i).substring(2);
+            //Tum3Logger.DoLog(db_name, false, "[DEBUG] entering tmpSubdirName='" + tmpSubdirName + "'");
             File dir = new File(DB_ROOT_PATH + tmpSubdirName + File.separator);
             File tmp_files[] = dir.listFiles();
+            tmp_day_shot_list.clear(); // YYY
+
+            // Consider month listing could be large. 
+            // Before going into deeper checking, make this dir listing sorted, 
+            // as otherwise it would be hard to decide when to stop.
+            // Until sorted, we can NOT be satisfied by reaching CONST_SYNC_SHOTS_ONCE_LIMIT.
             if (null != tmp_files) for (File file: tmp_files) {
                 if (file.isDirectory()) {
                     String tmp_name = file.getName();
-                    if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) if (tmp_name.substring(0, 4).equals(tmpSubdirName)) {
-                        boolean tmp_take_it = false;
-                        if (bup_start_day.isEmpty() || bup_start_subdir.isEmpty()) tmp_take_it = true;
-                        if (!tmp_take_it) if (!bup_start_subdir.equals(tmp_list.get(tmp_i))) tmp_take_it = true;
-                        if (!tmp_take_it) if (bup_start_subdir.equals(tmp_list.get(tmp_i)) && (bup_start_day.compareTo(tmp_name.substring(4, 6)) <= 0)) tmp_take_it = true;
-                        if (tmp_take_it) tmp_shot_list.add(YearExtend_Intl(tmp_name));
-                        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: tmp_name='" + tmp_name + "' tmp_take_it='" + tmp_take_it + "'");
-                    }
+                    if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) if (tmp_name.substring(0, 4).equals(tmpSubdirName))
+                        tmp_day_shot_list.add(tmp_name.substring(4)); // YYY
                 }
             }
-            if (tmp_shot_list.size() >= CONST_SYNC_SHOTS_ONCE_LIMIT) break;
+            tmp_day_shot_list.SortAsShots(); // YYY
+
+            // Now we do a second pass. This time the iteration is sorted,
+            // so we know when day change happen and can avoid going too far.
+            for (String tmp_day_shot: tmp_day_shot_list) { // YYY
+                String tmp_name = tmpSubdirName + tmp_day_shot; // YYY
+                boolean tmp_take_it = false;
+                if (bup_start_day.isEmpty() || bup_start_subdir.isEmpty()) tmp_take_it = true;
+                if (!tmp_take_it) if (!bup_start_subdir.equals(tmp_list.get(tmp_i))) tmp_take_it = true;
+                if (!tmp_take_it) if (bup_start_subdir.equals(tmp_list.get(tmp_i)) && (bup_start_day.compareTo(tmp_name.substring(4, 6)) <= 0)) tmp_take_it = true;
+                if (tmp_take_it) if (!(new File(DB_ROOT_PATH + tmpSubdirName + File.separator + tmp_name + File.separator + "0000" + Tum3Shot.FSUFF_NORMAL).exists())) tmp_take_it = false; // YYY
+                if (tmp_take_it) { // YYY
+                    tmp_shot_list.add(YearExtend_Intl(tmp_name));
+                    if (!tmp_check_last_day.isEmpty() && !tmp_check_last_day.equals(tmp_name.substring(0, 6))) tmp_day_switched = true; // YYY
+                    tmp_check_last_day = tmp_name.substring(0, 6);
+                }
+                //Tum3Logger.DoLog(db_name, false, "[DEBUG] tmp_name='" + tmp_name + "': tmp_take_it='" + tmp_take_it + "'");
+                if (tmp_day_switched && (tmp_shot_list.size() > CONST_SYNC_SHOTS_ONCE_LIMIT)) break; // YYY
+            }
+            if (tmp_day_switched && (tmp_shot_list.size() > CONST_SYNC_SHOTS_ONCE_LIMIT)) break; // YYY
         }
-        Collections.sort(tmp_shot_list);
+        tmp_shot_list.SortAsShots(); // Collections.sort(tmp_shot_list); // YYY
 
         bup_task_list.clear();
         bup_task_pos = -1;
-        for (int tmp_i = 0; (tmp_i < tmp_shot_list.size()) && (bup_task_list.size() < CONST_SYNC_SHOTS_ONCE_LIMIT); tmp_i++)
-            bup_task_list.add(tmp_shot_list.get(tmp_i).substring(2));
+        tmp_check_last_day = ""; // YYY
+        tmp_day_switched = false; // YYY
+        for (int tmp_i = 0; tmp_i < tmp_shot_list.size(); tmp_i++) { // YYY
+            String tmp_task_next_shot = tmp_shot_list.get(tmp_i).substring(2);
+            if (tmp_day_switched && (bup_task_list.size() >= CONST_SYNC_SHOTS_ONCE_LIMIT)) // YYY
+                break; // YYY
+            else {
+                bup_task_list.add(tmp_task_next_shot);
+                if (!tmp_check_last_day.isEmpty() && !tmp_check_last_day.equals(tmp_task_next_shot.substring(0, 6))) tmp_day_switched = true; // YYY
+                tmp_check_last_day = tmp_task_next_shot.substring(0, 6);
+            }
+        }
 
-        if (bup_task_list.size() > 0) Tum3Logger.DoLog(db_name, false, "Backup sync: found " + bup_task_list.size() + " new raw shots."); // YYY
+        //if (bup_task_list.size() > 0) Tum3Logger.DoLog(db_name, false, "Backup sync: found " + bup_task_list.size() + " raw shots for consideration.");
 
-        //Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: non-volatile bup_task_list='" + bup_task_list + "'");
+        //Tum3Logger.DoLog(db_name, false, "[DEBUG] non-volatile bup_task_list='" + bup_task_list + "'");
 
         BupTryNextTask_Intl();
         //if ((bup_task_pos >= 0) && (bup_task_pos < bup_task_list.size())) if (bup_shot_items.size() > 0) Tum3Logger.DoLog(db_name, true, "[aq2j] DEBUG: bup_task_pos=" + bup_task_pos + " shot=" + bup_task_list.get(bup_task_pos) + ", bup_shot_items='" + bup_shot_items + "'");
@@ -1057,14 +1279,14 @@ public class Tum3Db implements Runnable, AppStopHook {
                 if (file.isDirectory()) {
                     String tmp_name = file.getName();
                     if ((8 <= tmp_name.length()) && (9 >= tmp_name.length())) if (tmp_name.substring(0, 4).equals(tmpSubdirName)) {
-                        boolean tmp_take_it = bup_last_seen_syn_shot.isEmpty() || (bup_last_seen_syn_shot.compareTo(tmp_name) < 0);
+                        boolean tmp_take_it = bup_last_seen_syn_shot.isEmpty() || (StringList.compareAsShots(bup_last_seen_syn_shot, tmp_name) /* bup_last_seen_syn_shot.compareTo(tmp_name) */ < 0); // YYY
                         if (tmp_take_it) tmp_shot_list.add(YearExtend_Intl(tmp_name));
                     }
                 }
             }
             if (tmp_shot_list.size() >= CONST_SYNC_SHOTS_ONCE_LIMIT) break;
         }
-        Collections.sort(tmp_shot_list);
+        tmp_shot_list.SortAsShots(); // Collections.sort(tmp_shot_list); // YYY
 
         bup_task_list.clear();
         bup_task_pos = -1;
@@ -1153,10 +1375,12 @@ public class Tum3Db implements Runnable, AppStopHook {
                 if (!tmp_monthdir.exists()) tmp_monthdir.mkdir();
                 if (!bup_prev_seen_monthdir.equals(shotSubdir)) {
                     bup_prev_seen_monthdir = shotSubdir;
-                    AppendMonthToMasterList(shotSubdir, false);
+                    AppendMonthToMasterList(0, shotSubdir, false);
                 }
                 File tmp_shotdir = new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot);
                 if (!tmp_shotdir.exists()) tmp_shotdir.mkdir();
+                if (!tmp_shotdir.exists())
+                    throw new Exception("Failed to create <" + tmpActualPath + shotSubdir + File.separator + bup_current_shot + "> dir. Maybe access rights or paths are messed up?"); // YYY
 
                 if (!_is_volatile) if (new File(tmpActualPath + shotSubdir + File.separator + bup_current_shot + File.separator + bup_current_file_real).exists())
                     throw new Exception("Internal sync error: <" + bup_current_shot + File.separator + bup_current_file_real + "> already exists.");
@@ -1573,9 +1797,10 @@ public class Tum3Db implements Runnable, AppStopHook {
     }
 
     public String getPackedLastList() throws Exception {
+    // Note. This always operate unfiltered!
 
         //if (true) throw new Exception("Test exceptn 1");
-        StringList tmp_list = GetRawRootDir();
+        StringList tmp_list = GetRawRootDir(false);
 
         if (tmp_list.size() <= 0) return "";
         Collections.sort(tmp_list);
@@ -1596,38 +1821,15 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
-    public Tum3Shot newShot(String _shot_name, String _the_program, int[] _expected_ids, ByteArrayOutputStream _aq_profile_body) throws Exception {
-
-        if (!Tum3cfg.isWriteable(db_index)) throw new Exception(CONST_MSG_READONLY_NOW);
-        if (DB_ROOT_PATH.length() <= 0) throw new Exception("The database path is not defined.");
-
-        String tmp_name = _shot_name.toUpperCase();
-        Tum3Shot tmpShot = null;
-        synchronized (openShots) {
-            if (openShots.containsKey(tmp_name)) throw new Exception("Internal error: shot name is already in use.");
-            tmpShot = new Tum3Shot(this, DB_ROOT_PATH, DB_ROOT_PATH_VOL, tmp_name.substring(0, 4), tmp_name, true, _the_program, _expected_ids, _aq_profile_body);
-            tmpShot.ShotAddUser();
-            openShots.put(tmp_name, tmpShot);
-        }
-        String tmp_master_name = tmp_name.substring(0, 4);
-        if (Tum3Util.StrNumeric(tmp_master_name) && (4 == tmp_master_name.length()))
-            AppendMonthToMasterList(tmp_master_name, true); // YYY
-        tmpShot.CompleteCreation(); // Note. If already exists, it opens normally as old 
-        // and then raises an exception that propagates out.
-
-        return tmpShot;
-
-    }
-
-    private void AppendMonthToMasterList(String _master_name, boolean _auto_load) throws Exception { // YYY
+    private void AppendMonthToMasterList(int _filtermode, String _master_name, boolean _auto_load) throws Exception { // YYY
 
         synchronized (MasterListLock) {
-            if (MasterList == null) {
+            if (MasterList[_filtermode] == null) {
                 if (!_auto_load) return; // YYY
                 LoadMasterList();
             }
-            if (MasterList.indexOf(_master_name) < 0)
-                MasterList.add(_master_name);
+            if (MasterList[_filtermode].indexOf(_master_name) < 0)
+                MasterList[_filtermode].add(_master_name);
         }
     }
 
@@ -1643,7 +1845,31 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    public Tum3Shot newShot(String _shot_name, String _the_program, int[] _expected_ids, ByteArrayOutputStream _aq_profile_body) throws Exception {
+
+        if (!Tum3cfg.isWriteable(db_index)) throw new Exception(CONST_MSG_READONLY_NOW);
+        if (DB_ROOT_PATH.length() <= 0) throw new Exception("The database path is not defined.");
+
+        String tmp_name = _shot_name.toUpperCase();
+        Tum3Shot tmpShot = null;
+        synchronized (openShots) {
+            if (openShots.containsKey(tmp_name)) throw new Exception("Internal error: shot name is already in use.");
+            tmpShot = new Tum3Shot(this, DB_ROOT_PATH, DB_ROOT_PATH_VOL, tmp_name.substring(0, 4), tmp_name, true, _the_program, _expected_ids, _aq_profile_body);
+            tmpShot.ShotAddUser();
+            openShots.put(tmp_name, tmpShot);
+        }
+        String tmp_master_name = tmp_name.substring(0, 4);
+        if (Tum3Util.StrNumeric(tmp_master_name) && (4 == tmp_master_name.length()))
+            AppendMonthToMasterList(0, tmp_master_name, true); // YYY
+        tmpShot.CompleteCreation(); // Note. If already exists, it opens normally as old 
+        // and then raises an exception that propagates out.
+
+        return tmpShot; // By this time, normally, 0000.000 has already been created.
+
+    }
+
     public Tum3Shot getShot(String this_shot_name, boolean _allow_master) throws Exception {
+    // Note. This function is supposed to open existing shots only.
 
         Tum3Shot tmpShot = null;
         String tmp_name = this_shot_name.toUpperCase();
@@ -1654,10 +1880,11 @@ public class Tum3Db implements Runnable, AppStopHook {
 
         if (DB_ROOT_PATH.length() > 0) {
             boolean tmp_force_dispose_unused = false;
+            boolean tmp_need_add = true;
+            boolean tmp_try_again = false;
             synchronized (openShots) {
-                boolean tmp_need_add = true;
-                boolean tmp_try_again = false;
                 do {
+                    tmp_try_again = false; // YYY
                     if (openShots.containsKey(tmp_name)) {
                         tmpShot = (Tum3Shot) openShots.get(tmp_name);
                         if (null == tmpShot) {
@@ -1671,13 +1898,36 @@ public class Tum3Db implements Runnable, AppStopHook {
                         }
                     }
                 } while (tmp_try_again && !TerminateRequested);
-                if (tmp_need_add) {
-                    tmpShot = new Tum3Shot(this, DB_ROOT_PATH, DB_ROOT_PATH_VOL, tmp_name.substring(0, 4), tmp_name, false, "", null, null);
-                    //tmp_need_to_complete = true;
-                    tmpShot.ShotAddUser();
-                    openShots.put(tmp_name, tmpShot);
+            } // YYY
+             
+            if (tmp_need_add) {
+                String shotSubdir = tmp_name.substring(0, 4); // YYY
+                if ((new File(DB_ROOT_PATH + shotSubdir + File.separator + tmp_name + File.separator + "0000" + Tum3Shot.FSUFF_NORMAL)).isFile()) { // YYY
+                    synchronized (openShots) { // YYY
+                        do { // YYY
+                            tmp_try_again = false; // YYY
+                            if (openShots.containsKey(tmp_name)) {
+                                tmpShot = (Tum3Shot) openShots.get(tmp_name);
+                                if (null == tmpShot) {
+                                    tmp_try_again = true;
+                                    try {
+                                        openShots.wait(CONST_SHOTS_WAIT_PERIOD * (long)1000);
+                                    } catch (Exception e) { }
+                                } else {
+                                    tmp_need_add = false;
+                                    tmpShot.ShotAddUser();
+                                }
+                            }
+                        } while (tmp_try_again && !TerminateRequested);
+                        if (tmp_need_add) {
+                            tmpShot = new Tum3Shot(this, DB_ROOT_PATH, DB_ROOT_PATH_VOL, shotSubdir, tmp_name, false, "", null, null);
+                            //tmp_need_to_complete = true;
+                            tmpShot.ShotAddUser();
+                            openShots.put(tmp_name, tmpShot);
+                            tmp_force_dispose_unused = (openShots.size() > CONST_SHOTS_MAX_OPEN);
+                        }
+                    }
                 }
-                tmp_force_dispose_unused = (openShots.size() > CONST_SHOTS_MAX_OPEN);
             }
             if (tmp_force_dispose_unused) DisposeUnusedShots(false);
         }
@@ -1688,7 +1938,7 @@ public class Tum3Db implements Runnable, AppStopHook {
         if (_allow_master && (null != master_db)) {
             boolean tmp_local_found = false;
             if (null != tmpShot) {
-                tmpShot.CompleteCreation();
+                //tmpShot.CompleteCreation(); // YYY This one looks excessive?
                 if (!tmpShot.NotStored()) tmp_local_found = true;
             }
             if (!tmp_local_found && !ShotNumLocal(this_shot_name)) {
@@ -1718,7 +1968,7 @@ public class Tum3Db implements Runnable, AppStopHook {
                 Tum3Shot tmpShot = entry.getValue();
                 if (for_shutdown || (tmpShot.notUsed(tmp_max_millis, (tmp_count_to_dispose > 0)))) { // Reminder note: if UserCount == 0 then there is no way to obtain any new reference other than inside of openShots lock. Therefore, no additional atomicity is necessary here.
                     String tmp_name = entry.getKey();
-                    //      System.out.println("[aq2j] DEBUG: DisposeUnusedShots(): '" + tmp_name + "' will now be disposed.");
+                    //System.out.println("[aq2j] DEBUG: DisposeUnusedShots(): '" + tmp_name + "' will now be disposed.");
                     closingShots.put(tmp_name, tmpShot);
                     tmp_need_to_notify = true;
                     entry.setValue(null);
@@ -1765,31 +2015,34 @@ public class Tum3Db implements Runnable, AppStopHook {
         LoadMasterList();
 
         // Note: synchronization is not needed here bacause MasterList can not be modified by any different thread (except in LoadMasterList()).
-        int tmp_j = MasterList.size() - 1;
+        int tmp_j = MasterList[0].size() - 1;
         while (tmp_j >= 0) {
-            //System.out.println("[DEBUG] LatestShotDate: " + MasterList.get(tmp_j) + " ...");
-            StringList tmpList = GetThisDir(tmp_j+1);
+            //System.out.println("[DEBUG] LatestShotDate: " + MasterList[0].get(tmp_j) + " ...");
+            StringList tmpList = GetThisDir(false, tmp_j+1);
             if (tmpList.size() == 0) tmp_j--;
             else
-                return MasterList.get(tmp_j) + tmpList.get(tmpList.size() - 1).substring(0, 2);
+                return MasterList[0].get(tmp_j) + tmpList.get(tmpList.size() - 1).substring(0, 2);
         }
 
         return "";
 
     }
 
-    public void PackDirectory(String thisName, int thisSkipDirection, ByteArrayOutputStream thisBuff) throws Exception {
+    public void PackDirectory(boolean published_only, String thisName, int thisSkipDirection, ByteArrayOutputStream thisBuff) throws Exception {
 
         StringList theList;
         String RefName = "", st;
         int tmp_i, tmp_j;
+
+        published_only &= HaveFilterMode;
+        int tmp_filtermode = Published2Filter(published_only); // YYY
 
         //System.out.println("[aq2j] DEBUG: in PackDirectory('" + thisName + "', " + thisSkipDirection + ")");
 
         if ((thisName.length() == 0) && (thisSkipDirection == 0)) {
 
             LoadMasterList();
-            theList = MasterList;  
+            theList = MasterList[tmp_filtermode];
             thisName = "";
             RefName = "";
 
@@ -1801,19 +2054,19 @@ public class Tum3Db implements Runnable, AppStopHook {
             RefName = thisName;
 
             StringList tmpList;
-            tmp_j = MasterList.indexOf(thisName);
+            tmp_j = MasterList[tmp_filtermode].indexOf(thisName);
             if (tmp_j >= 0) {
                 //System.out.println("[aq2j] DEBUG: PackDirectory: Good!");
-                tmpList = GetThisDir(tmp_j+1);
+                tmpList = GetThisDir(published_only, tmp_j+1);
                 if ((tmpList.size() == 0) && ((thisSkipDirection == CONST_SkipBack) || (thisSkipDirection == CONST_SkipForth))) {
-                    while (((tmp_j > 0) || (thisSkipDirection == CONST_SkipForth)) && ((tmp_j < (MasterList.size()-1)) || (thisSkipDirection == CONST_SkipBack))
-                            && (tmpList.size() == 0) && (!MasterList.get(tmp_j).equals(Name2))) {
+                    while (((tmp_j > 0) || (thisSkipDirection == CONST_SkipForth)) && ((tmp_j < (MasterList[tmp_filtermode].size()-1)) || (thisSkipDirection == CONST_SkipBack))
+                            && (tmpList.size() == 0) && (!MasterList[tmp_filtermode].get(tmp_j).equals(Name2))) {
                         if (thisSkipDirection == CONST_SkipBack) tmp_j--;
                         else tmp_j++;
-                        if (!MasterList.get(tmp_j).equals(Name2)) {
-                            tmpList = GetThisDir(tmp_j+1);
+                        if (!MasterList[tmp_filtermode].get(tmp_j).equals(Name2)) {
+                            tmpList = GetThisDir(published_only, tmp_j+1);
                             if (tmpList.size() > 0)
-                                thisName = MasterList.get(tmp_j);
+                                thisName = MasterList[tmp_filtermode].get(tmp_j);
                         }
                     }
                 }
@@ -2133,6 +2386,88 @@ public class Tum3Db implements Runnable, AppStopHook {
 
     }
 
+    public String ExternalPutTrace_int(int _db_idx, String _shot_name, int _signal_id, ByteBuffer _header, ByteBuffer _body, boolean DataIsVolatile, String _caller_ip_addr, ShotChangeMonitor _helper) {
+    // See also: SrvLink.UploadOne()
+
+        String tmp_name = "signal id <" + _signal_id + ">";
+        String tmp_err_prefix = "Could not store " + tmp_name + " of " + _shot_name + ": ";
+        Tum3SignalList tmpSignalList = Tum3SignalList.GetSignalList();
+        int tmp_index = tmpSignalList.FindIndex(_signal_id);
+        if ((tmp_index < 1) || (tmp_index > tmpSignalList.SignalCount())) return tmp_err_prefix + "signal id is not valid.";
+        else {
+            NameValueList tmp_entry = tmpSignalList.GetSignalEntry(tmp_index);
+            tmp_name = tmp_entry.GetValueFor(Tum3SignalList.const_signal_title, tmp_name);
+            tmp_err_prefix = "Could not store " + tmp_name + " of " + _shot_name + ": ";
+            if (!Tum3SignalList.AllowExtUpload(tmp_entry)) return tmp_err_prefix + "not allowed";
+        }
+
+        Tum3Shot tmp_shot = null;
+        try {
+            tmp_shot = getShot(_shot_name, true);
+        } catch (Exception e) {
+            return tmp_err_prefix + e;
+        }
+        if (tmp_shot == null) return tmp_err_prefix + CONST_MSG_SRVLINK_ERR01;
+        if ((null == tmp_shot.GetDb()) || ((tmp_shot.GetDb() != this) && (tmp_shot.GetDb() != GetMasterDb()))) {
+            tmp_shot.ShotRelease();
+            return tmp_err_prefix + CONST_MSG_SRVLINK_ERR02;
+        }
+
+        if (!tmp_shot.isWriteable || !Tum3cfg.isWriteable(_db_idx)) { // YYY
+            tmp_shot.ShotRelease();
+            return tmp_err_prefix + CONST_MSG_READONLY_NOW;
+        }
+
+        if (!(DataIsVolatile && VolatilePathPresent())) if (!(new Tum3Time().GetCurrYMD()).equals(_shot_name.substring(0,6))) { // Restrict shot date to current unless volatile.
+            tmp_shot.ShotRelease();
+            return tmp_err_prefix + CONST_MSG_INV_SHOT_NUMBER;
+        }
+
+        boolean tmp_ref_ok = false;
+        String tmp_result = "Unknown error";
+        try {
+            Tum3Shot.insertHostName(_header, "[" + _caller_ip_addr + "]");
+            tmp_ref_ok = true;
+            tmp_shot.putTrace(_signal_id, _header, _body, _helper, DataIsVolatile);
+            tmp_result = "";
+        } catch (Exception e) {
+            tmp_result = "Exception " + Tum3Util.getStackTrace(e);
+        }
+        if (!tmp_ref_ok) tmp_shot.ShotRelease();
+        //if (tmp_shot != null) tmp_shot.Release();
+
+        if (tmp_result.length() > 0)
+            return tmp_err_prefix + tmp_result;
+        else
+            return "";
+    }
+
+    public static String ExternalPutTrace(int _db_idx, String _shot_num, int _signal_id, ByteBuffer _hdr_buf, ByteBuffer _data_buf, boolean DataIsVolatile, String _caller_ip_addr, ShotChangeMonitor _helper) {
+
+        Tum3Db tmp_inst = getDbInstance(_db_idx, false);
+        String tmp_err_msg = tmp_inst.ExternalPutTrace_int(_db_idx, _shot_num, _signal_id, _hdr_buf, _data_buf, DataIsVolatile, _caller_ip_addr, _helper);
+
+        if (tmp_err_msg.isEmpty())
+            Tum3Logger.DoLog(tmp_inst.db_name, false, "Successfully stored " + _shot_num + "." + _signal_id + " from " + _caller_ip_addr);
+        else
+            Tum3Logger.DoLog(tmp_inst.db_name, false, "Failed storing " + _shot_num + "." + _signal_id + " from " + _caller_ip_addr + ": " + tmp_err_msg);
+
+        return tmp_err_msg;
+    }
+
+    private void FlushHelper_int(SingleShotWriteHelper _helper) {
+
+        _helper.PushModifiedIds(this);
+
+    }
+
+    public static void FlushHelper(int _db_idx, SingleShotWriteHelper _helper) {
+
+        Tum3Db tmp_inst = getDbInstance(_db_idx, true);
+        if (null == tmp_inst) return;
+        tmp_inst.FlushHelper_int(_helper);
+    }
+
     private int GetWaitingTrig_int() {
 
         if (IsWaitingTrig) return 1; else return 0;
@@ -2239,4 +2574,65 @@ public class Tum3Db implements Runnable, AppStopHook {
         // Maybe for future use.
     }
 
+    private String SymlinkShotList(StringList _shot_names, StringList _notify_list) throws Exception { // YYY
+
+        String tmp_prev_shotSubdir = "";
+
+        if (!HaveFilterMode) return "No path(s) configured for publishing currently.";
+
+        for (int i = 0; i < _shot_names.size();) {
+
+            String tmp_shot_name = _shot_names.get(i);
+            String shotSubdir = tmp_shot_name.substring(0, 4);
+            boolean tmp_done_shot = false;
+            boolean tmp_failed_shot = false;
+            boolean tmp_add_notify = false;
+
+            for (boolean tmp_is_vol: Arrays.asList(false, true)) {
+
+                String tmpActualPath = tmp_is_vol ? PUBLISHED_ROOT_PATH_VOL : PUBLISHED_ROOT_PATH;
+                String tmpTargetPath = tmp_is_vol ? DB_REL_ROOT_PATH_VOL : DB_REL_ROOT_PATH;
+                if (!tmpActualPath.isEmpty() && !tmpTargetPath.isEmpty()) {
+                    File tmp_monthdir = new File(tmpActualPath + shotSubdir);
+                    tmp_monthdir.mkdir();
+                    if (tmp_monthdir.exists()) {
+                        File tmp_shotdir = new File(tmpActualPath + shotSubdir + File.separator + tmp_shot_name);
+                        File tmp_target_shotdir = new File(tmpTargetPath + shotSubdir + File.separator + tmp_shot_name);
+                        try { Files.createSymbolicLink(tmp_shotdir.toPath(), tmp_target_shotdir.toPath()); tmp_add_notify = true; } catch (Exception ignored) {}
+                        if (DEBUG_ON_WIN) { if (tmp_shotdir.mkdir()) tmp_add_notify = true; }
+                        if (tmp_shotdir.exists()) tmp_done_shot = true;
+                    } else tmp_failed_shot = true;
+                }
+            }
+            if (!tmp_prev_shotSubdir.equals(shotSubdir)) {
+                tmp_prev_shotSubdir = shotSubdir;
+                AppendMonthToMasterList(1, shotSubdir, false);
+            }
+            if (tmp_add_notify) _notify_list.add(tmp_shot_name);
+            if (tmp_done_shot && !tmp_failed_shot) i++;
+            else _shot_names.remove(i);
+        }
+
+        return "";
+
+    }
+
+    public String PublishShots(StringList _shot_names) {
+
+        String tmp_result = "Unknown error";
+        StringList tmp_notify_list = new StringList();
+
+        try {
+
+            tmp_result = SymlinkShotList(_shot_names, tmp_notify_list);
+
+        } catch(Exception e) {
+            Tum3Logger.DoLog(db_name, true, e.toString() + Tum3Util.getStackTrace(e));
+            return "Unexpected exception " + e.toString();
+        }
+
+        if (tmp_notify_list.size() > 0) Tum3Broadcaster.DistributeGeneralEvent(this, new GeneralDbDistribEvent(GeneralDbDistribEvent.DB_EV_NEWSHOT, tmp_notify_list, GeneralDbDistribEvent.IS_PUBLISHING), null); // YYY
+        return tmp_result;
+
+    }
 }

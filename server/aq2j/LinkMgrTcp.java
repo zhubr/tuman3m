@@ -48,7 +48,7 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
     private final static int INTRL_SOCK_FULL = 1;
     private final static int INTRL_DATA_FULL = 2;
 
-    private String transp_caller = "";
+    private volatile String transp_caller = "", transp_user = "", transp_agent = ""; // YYY
     SessionProducerTcp session_producer;
 
 
@@ -69,9 +69,13 @@ public final class LinkMgrTcp extends Thread implements SrvLinkOwner, ClientWrit
 
     public String get_transp_caller() { return transp_caller; }
 
-    public String get_transp_user() { return ""; }
+    public void set_transp_caller(String new_caller) { transp_caller = new_caller; } // YYY
 
-    public String get_transp_agent() { return ""; }
+    public String get_transp_user() { return transp_user; }
+
+    public void set_transp_user(String new_user) { transp_user = new_user; } // YYY
+
+    public String get_transp_agent() { return transp_agent; }
 
     public String get_transp_title() { return "tcp"; }
 

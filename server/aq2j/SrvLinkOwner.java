@@ -24,5 +24,7 @@ interface SrvLinkOwner
     public String get_transp_user();
     public String get_transp_agent();
     public String get_transp_title();
+    public void set_transp_user(String new_user); // YYY
+    public void set_transp_caller(String new_caller); // YYY
 
 }

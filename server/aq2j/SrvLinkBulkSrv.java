@@ -213,4 +213,11 @@ public class SrvLinkBulkSrv extends SrvLinkIntercon {
         else super.ExecuteReq(thrd_ctx, req_code, req_body, req_trailing_len);
 
     }
+
+    protected String makeHttpResponse(String _http_header) {
+
+        parseHttpValues(_http_header);
+        return makeSwitchToWsHttpHdr();
+
+    } 
 }

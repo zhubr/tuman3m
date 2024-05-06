@@ -215,4 +215,10 @@ public class SrvLinkMetaSrv extends SrvLinkMeta {
         }
     }
 
+    protected String makeHttpResponse(String _http_header) {
+
+        parseHttpValues(_http_header);
+        return makeSwitchToWsHttpHdr();
+
+    } 
 }

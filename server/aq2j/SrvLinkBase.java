@@ -29,6 +29,7 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
     private final static int CONST_LOGIN_FAIL_PENDING_SEC = 15;
     private final static int CONST_LOGIN_TIMEOUT_SEC = 15;
     private final static int CONST_OUT_BUFF_WAIT_WAKEUP_SEC = 1000;
+    private final static int CONST_HTTP_HEADER_LIMIT = 1023; // YYY
 
     // Note very nice to have it in base class but still.
     protected final static String TUM3_CFG_max_out_queue_kbytes = "max_out_queue_kbytes";
@@ -37,11 +38,14 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
     private final static int STAGE_SIGN_4BYTES = 0;
     private final static int STAGE_TRAILING_LEN = 1;
     private final static int STAGE_TRAILING_BODY = 2;
+    private final static int STAGE_TRAILING_HTTP = 3; // YYY
 
     public final static byte THRD_EXTERNAL = 4;
     public final static byte THRD_INTERNAL = 5;
     private final static byte THRD_UNKNOWN = 0;
 
+    private StringBuilder http_req_header = null; // YYY
+    private boolean allow_pre_http = false; // YYY
     private int curr_stage = STAGE_SIGN_4BYTES;
     private int curr_remaining_bytes = 4;
     private int curr_req_trailing_len = 0;
@@ -160,6 +164,10 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
 
     }
 
+    protected void allowPreHttp() {
+        allow_pre_http = true;
+    }
+
     private int getOutBuffCountMax() {
 
         return tuned_pars.CONST_OUT_BUFF_COUNT_MAX[db_index];
@@ -254,9 +262,19 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
                 if (curr_remaining_bytes == 0) {
                     if ((TumProtoConsts.REQUEST_SIGN1 == req_header[3]) && (TumProtoConsts.REQUEST_SIGN2 == req_header[2]) && (TumProtoConsts.REQUEST_SIGN3 == req_header[1])) {
                         //System.out.println("[aq2j] DEBUG: signature OK.");
+                        allow_pre_http = false; // YYY
                         curr_req_code = req_header[0];
                         curr_stage = STAGE_TRAILING_LEN;
                         curr_remaining_bytes = 4;
+                    } else if (allow_pre_http && ((byte)'T' == req_header[2]) && (
+                         (((byte)'G' == req_header[0]) && ((byte)'E' == req_header[1]) && ((byte)' ' == req_header[3]))
+                      || (((byte)'H' == req_header[0]) && ((byte)'T' == req_header[1]) && ((byte)'P' == req_header[3]))
+                    )) { // YYY
+                        allow_pre_http = false;
+                        curr_stage = STAGE_TRAILING_HTTP;
+                        curr_remaining_bytes = 0;
+                        http_req_header = new StringBuilder();
+                        http_req_header.append("" + (char)req_header[0] + (char)req_header[1] + (char)req_header[2] + (char)req_header[3]);
                     } else {
                         Tum3Logger.DoLog(getLogPrefixName(), true, "WARNING: got invalid req signature in SendToServer(): " + Integer.toHexString(req_header[0] & 0xFF) + " " +  Integer.toHexString(req_header[1] & 0xFF) + " " +  Integer.toHexString(req_header[2] & 0xFF) + " " +  Integer.toHexString(req_header[3] & 0xFF) + " from " + DebugTitle());
                         throw new Exception("got invalid req signature in SendToServer()");
@@ -287,6 +305,18 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
                         throw new Exception("got invalid req signature in SendToServer()");
                     }
                 }
+            } else if (curr_stage == STAGE_TRAILING_HTTP) {
+                UpdateLastClientActivityTime();
+                while (buf.hasRemaining()) {
+                    http_req_header.append((char)buf.get());
+                    if (http_req_header.substring(http_req_header.length()-4).equals("\r\n\r\n")) {
+                        curr_stage = STAGE_SIGN_4BYTES;
+                        curr_remaining_bytes = 4;
+                        OnHttpPreHeader(thrd_ctx, http_req_header.toString());
+                        break;
+                    }
+                    if (http_req_header.length() > CONST_HTTP_HEADER_LIMIT) throw new Exception("Http header exceeded length limit");
+                }
             } else if (curr_stage == STAGE_TRAILING_BODY) {
                 if (tmp_rem_count > 0) {
                     //System.arraycopy(buf, tmp_pos, req_body, (curr_req_trailing_len - curr_remaining_bytes), tmp_rem_count);
@@ -306,6 +336,28 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
             }
         }
 
+    }
+
+    protected String makeHttpResponse(String _http_header) {
+
+        return "";
+
+    } 
+
+    protected void OnHttpPreHeader(byte thrd_ctx, String _http_header) throws Exception {
+
+        //Tum3Logger.DoLog(getLogPrefixName(), false, "[DEBUG] in OnHttpPreHeader():" + _http_header);
+
+        String tmp_redund_http = makeHttpResponse(_http_header);
+        if (tmp_redund_http.isEmpty()) return;
+
+        //Tum3Logger.DoLog(getLogPrefixName(), false, "http reply: [" + tmp_redund_http + "]");
+
+        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null, false, false);
+        if (null == tmpBuff) throw new Exception("Failed to get free buffer for a http reply");
+        tmpBuff.InitSrvReply(tmp_redund_http.length());
+        tmpBuff.putString(tmp_redund_http);
+        PutBuff(thrd_ctx, tmpBuff, null);
     }
 
     public boolean ReadFromServer2(byte thrd_ctx, ClientWriter outbound, boolean hurry) throws Exception {
@@ -550,6 +602,18 @@ public abstract class SrvLinkBase implements TumProtoConsts, SrvLinkIntf {
     protected String get_transp_user() {
 
         return Owner.get_transp_user();
+
+    }
+
+    protected void set_transp_user(String new_user) { // YYY
+
+        Owner.set_transp_user(new_user);
+
+    }
+
+    protected void set_transp_caller(String new_caller) { // YYY
+
+        Owner.set_transp_caller(new_caller);
 
     }
 

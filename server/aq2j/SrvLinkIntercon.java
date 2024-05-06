@@ -12,6 +12,8 @@
  */
 package aq2j;
 
+import java.util.*;
+import java.text.SimpleDateFormat;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -73,6 +75,7 @@ public abstract class SrvLinkIntercon extends SrvLinkBase {
     public SrvLinkIntercon(int _db_idx, TunedSrvLinkPars _tuned_pars, SrvLinkOwner thisOwner) {
 
         super(_db_idx, _tuned_pars, thisOwner);
+        allowPreHttp(); // YYY
         db_name = Tum3cfg.getGlbInstance().getDbName(db_index);
         debug_ignore_db_name = "1".equals(Tum3cfg.getParValue(db_index, false, TUM3_CFG_debug_ignore_db_name, "")); // YYY
         if (debug_ignore_db_name) Tum3Logger.DoLog(db_name, true, "DEBUG: debug_ignore_db_name was set to 1, be very carefull!");
@@ -214,7 +217,7 @@ public abstract class SrvLinkIntercon extends SrvLinkBase {
             String tmp_password = jo.getString(JSON_NAME_password);
             String tmp_ep_name = jo.getString(JSON_NAME_endpoint_type); // YYY
             if (null == tmp_ep_name) tmp_ep_name = "";
-            //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] intercon login with <" + tmp_db + "," + tmp_login + "," + tmp_password + ">");
+            //Tum3Logger.DoLog(getLogPrefixName(), true, "[DEBUG] got intercon login request with <" + tmp_ep_name + "," + tmp_db + "," + tmp_login + "," + tmp_password + "> get_transp_user()=" + get_transp_user());
             if (!tmp_ep_name.isEmpty() && !InterconLabel().equals(tmp_ep_name))
                 Tum3Logger.DoLog(getLogPrefixName(), true, "Warning: endpoint type mismatch: " + InterconLabel() + " expected but " + tmp_ep_name + " was attempted."); // YYY
             else if ((getLogPrefixName().equals(tmp_db) || debug_ignore_db_name) && get_transp_user().equals(tmp_login)) // YYY
@@ -307,4 +310,30 @@ public abstract class SrvLinkIntercon extends SrvLinkBase {
 
     }
 
+    protected void parseHttpValues(String _http_header) {
+
+        if (_http_header.startsWith("GET ")) {
+            //Tum3Logger.DoLog(getLogPrefixName(), false, "[DEBUG] got http GET...");
+            String tmp_real_ip = "", tmp_real_port = "";
+            for (String tmp_line: _http_header.split("\r\n")) {
+                //Tum3Logger.DoLog(getLogPrefixName(), false, "[DEBUG] got http GET: <" + tmp_line + ">");
+                if (tmp_line.startsWith("X-Real-user:"))
+                    set_transp_user(tmp_line.substring(12).trim());
+                else if (tmp_line.startsWith("X-Real-ip:"))
+                    tmp_real_ip = tmp_line.substring(10).trim();
+                else if (tmp_line.startsWith("X-Real-port:"))
+                    tmp_real_ip = tmp_line.substring(12).trim();
+            }
+            if (!tmp_real_ip.isEmpty() || !tmp_real_port.isEmpty())
+                set_transp_caller(tmp_real_ip + ":" + tmp_real_port);
+        }
+    }
+
+    protected String makeSwitchToWsHttpHdr() {
+
+        return "HTTP/1.1 101 Switching Protocols\r\n"
+             + "Upgrade: websocket\r\nConnection: upgrade\r\n"
+             + "X-WebSocket-Tum3Compat: 1\r\n"
+             + "Date: " + (new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US)).format(new Date(System.currentTimeMillis())) + "\r\n\r\n";
+    }
 }

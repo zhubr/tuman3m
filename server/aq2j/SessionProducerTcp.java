@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2022-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -38,5 +38,18 @@ public abstract class SessionProducerTcp {
 
     public abstract SrvLinkBase newSrvLink(SrvLinkOwner thisOwner);
 
+    public static class ParseListenAddr { // YYY
+
+        public final String listen_ip;
+        public final int listen_port;
+
+        public ParseListenAddr(String _listen_addr) throws Exception {
+            int tmp_i = _listen_addr.indexOf(":");
+            if ((tmp_i < 1) || (tmp_i >= _listen_addr.length())) throw new Exception("Invalid listen addr:port specified");
+            listen_ip = _listen_addr.substring(0, tmp_i);
+            listen_port = Integer.parseInt(_listen_addr.substring(tmp_i+1));
+        }
+
+    }
 }
 

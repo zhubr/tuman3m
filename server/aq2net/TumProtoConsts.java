@@ -31,7 +31,7 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_REPORTAVAILVERSION_64 = (byte)0x9E;
     public final static byte REQUEST_TYPE_SENDMEPROGRAMFILE = (byte)0x7D;
     public final static byte REQUEST_TYPE_PROGRAMFILECOMING = 0x7E;
-    public final static byte REQUEST_TYPE_USERLOGIN = (byte)0x79;
+    //public final static byte REQUEST_TYPE_USERLOGIN = (byte)0x79; // YYY Obsolete. Do not use.
     public final static byte REQUEST_TYPE_USERLOGINX = (byte)0xA5;
     public final static byte REQUEST_TYPE_FLEX_TXT   = (byte)0xA6;
     public final static byte REQUEST_TYPE_FLEX_REPL  = (byte)0xA7;
@@ -46,6 +46,7 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_UPLOAD_END_HINT = (byte)0x86;
     public final static byte REQUEST_TYPE_TALKMSG = (byte)0x81;
     public final static byte REQUEST_TYPE_TRACEINVALIDATEONE = (byte)0x74;
+    public final static byte REQUEST_TYPE_INVALIDATEMANY = (byte)0xB4; // YYY
     public final static byte REQUEST_TYPE_TRACEREMOVED = (byte)0xA0;
     public final static byte REQUEST_TYPE_DOWNLOAD_PAUSED = (byte)0x8E;
     public final static byte REQUEST_TYPE_AQ3_REQ = (byte)0x91;
@@ -54,6 +55,7 @@ public interface TumProtoConsts
     public final static byte REQUEST_TYPE_AGENT_INFO = (byte)0x8D;
     public final static byte REQUEST_TYPE_UGC_REQ = (byte)0xAB;
     public final static byte REQUEST_TYPE_REQUEST_FILES = (byte)0xAA;
+    public final static byte REQUEST_TYPE_PUBLISH_SHOTS = (byte)0xB2; // YYY
 
     // Reply codes.
     public final static byte REQUEST_TYPE_AVAILVERSION = (byte)0x7C;
@@ -85,6 +87,8 @@ public interface TumProtoConsts
 
     public final static byte REQUEST_TYPE_FPART_TRNSF = (byte)0xB0; // YYY
     public final static byte REQUEST_TYPE_FPART_CNFRM = (byte)0xB1; // YYY
+
+    public final static byte REQUEST_TYPE_PUBLISH_RSLT = (byte)0xB3; // YYY
 
     // Special IDs
     public final static int CONST_ID_LIST_ALL = -1;

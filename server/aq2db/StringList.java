@@ -20,10 +20,43 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Comparator;
+import java.util.Collections;
 
 
 public class StringList extends ArrayList<String> {
 
+    private final static ShotNumComparator shotNumComp = new ShotNumComparator();
+
+    private static class ShotNumComparator implements Comparator<String> {
+
+        public int compare(String o1, String o2) {
+
+            //return o1.compareTo(o2);
+            return compareAsShots(o1, o2); // YYY
+
+        }
+    }
+
+    public static final int compareAsShots(String s1, String s2) {
+        // compareAsShots(bup_last_seen_syn_shot, tmp_name)
+        //return bup_last_seen_syn_shot.compareTo(tmp_name);
+
+        //return s1.compareTo(s2);
+
+        // Use custom compare to correctly sort also for longer shot numbers.
+        if (s1.length() < s2.length()) return -1; // YYY
+        else if (s1.length() > s2.length()) return 1; // YYY
+        else return s1.compareTo(s2);
+
+    }
+
+    public void SortAsShots() { // YYY
+
+        //Collections.sort(this);
+        sort(shotNumComp); // YYY
+
+    }
 
     public StringList(String[] src, boolean trim_lf) {
 

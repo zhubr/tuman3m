@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -252,7 +252,7 @@ public class Tum3Logger implements Runnable, AppStopHook {
 
         try {
 
-            DoLog_internal("-", false, "Logging stopped.", const_global, false, true);
+            DoLog_internal("-", false, "Logging stopped, ver " + a.CurrentVerNum, const_global, false, true); // YYY
             //System.out.println("[DEBUG] Logger {Logging stopped.} passed, size=" + buff_filling.size());
             CheckAndFlush();
             synchronized(log_lock) { DoSwapLists(); } // YYY

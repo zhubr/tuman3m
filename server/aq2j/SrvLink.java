@@ -65,8 +65,6 @@ class PendingTraceListStrings extends ArrayList<String> {
 
 public class SrvLink extends SrvLinkBase implements UgcReplyHandlerExt, aq3sender {
 
-    private final static String CONST_MSG_SRVLINK_ERR01 = "Internal error opening shot name";
-    private final static String CONST_MSG_SRVLINK_ERR02 = "Internal error locating shot name";
     public final static short[] decrypt_arr = {
         50, 20, 66, 255, 49, 122, 195, 254, 189, 178, 253, 26, 250, 251, 222, 
         142, 56, 95, 32, 246, 247, 243, 59, 241, 101, 229, 109, 76, 242, 239, 
@@ -107,6 +105,8 @@ public class SrvLink extends SrvLinkBase implements UgcReplyHandlerExt, aq3sende
 
     private boolean WasAuthorized = false;
     private volatile int FFeatureSelectWord = 0; // Moved from local.
+    private volatile boolean published_only = false; // YYY
+    private String FLoginOptionsWarning = ""; // YYY
     private boolean LoginFailedState = false;
     private long LoginFailedAt;
     private Tum3Perms UserPermissions, MasterdbUserPermissions;
@@ -846,6 +846,54 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
     }
 
 
+    private void Process_PublishShots(byte thrd_ctx, byte[] req_body, int req_trailing_len) throws Exception {
+
+        if (dbLink == null) {
+            Tum3Logger.DoLog(db_name, true, "Internal error: no dbLink in Process_PublishShots." + " Session: " + DebugTitle());
+            throw new Exception("no dbLink in Process_PublishShots");
+        }
+
+        String tmp_final_str = "*" + Tum3Db.CONST_MSG_ACCESS_DENIED;
+
+        if (UserPermissions.isPublishingAllowed()) {
+
+            ByteBuffer tmpBB = ByteBuffer.wrap(req_body);
+            tmpBB.limit(req_trailing_len);
+            tmpBB.order(ByteOrder.LITTLE_ENDIAN);
+
+            String tmp_shot_names = "";
+            try {
+                StringBuffer tmp_buff = new StringBuffer();
+                while (tmpBB.position() < req_trailing_len) tmp_buff.append((char)tmpBB.get());
+                tmp_shot_names = tmp_buff.toString();
+            } catch (Exception e) {
+                Tum3Logger.DoLog(db_name, true, "WARNING: unexpected format request in Process_PublishShots() ignored." + " Session: " + DebugTitle());
+            }
+
+            //System.out.println("[aq2j] DEBUG: Process_PublishShots(): <" + tmp_shot_names +">");
+            StringList tmp_req_shot_names = new StringList(tmp_shot_names.split("\r\n"));
+
+            String tmp_error_msg = dbLink.PublishShots(tmp_req_shot_names);
+            StringBuffer tmp_out_str = new StringBuffer();
+
+            if (tmp_error_msg.length() > 0) tmp_out_str.append("*" + tmp_error_msg);
+            else for (String tmp_published: tmp_req_shot_names) tmp_out_str.append(tmp_published + HandyMisc.crlf);
+
+            tmp_final_str = tmp_out_str.toString();
+        }
+
+        OutgoingBuff tmpBuff = GetBuff(thrd_ctx, null);
+        tmpBuff.InitSrvReply(REQUEST_TYPE_PUBLISH_RSLT, tmp_final_str.length(), tmp_final_str.length());
+        tmpBuff.putString(tmp_final_str);
+        try {
+            PutBuff(thrd_ctx, tmpBuff, null);
+        } catch (Exception e) {
+            tmpBuff.CancelData();
+            throw e;
+        }
+    }
+
+
     private void Process_GetMiscInfos(byte thrd_ctx, byte[] req_body, int req_trailing_len) throws Exception {
 
         if (!WasAuthorized) {
@@ -1084,7 +1132,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             if (tmp_strings[tmp_i].length() > 0) {
                 tmp_dir_buf.reset();
                 //System.out.println("[aq2j] DEBUG: req dir='" + tmp_strings[tmp_i].substring(1) + "' " + ((int)tmp_strings[tmp_i].charAt(0)));
-                dbLink.PackDirectory(tmp_strings[tmp_i].substring(1), (int)tmp_strings[tmp_i].charAt(0), tmp_dir_buf);
+                dbLink.PackDirectory(published_only, tmp_strings[tmp_i].substring(1), (int)tmp_strings[tmp_i].charAt(0), tmp_dir_buf); // YYY
 
                 OutgoingBuff tmpBuff = GetBuff(thrd_ctx, ctx); // XXX FIXME! Check if ctx could be used erroneously more than once or remove the loop.
                 tmpBuff.InitSrvReply(REQUEST_TYPE_DIRECTORYCOME, tmp_dir_buf.size(), tmp_dir_buf.size());
@@ -1147,6 +1195,20 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         Tum3Logger.DoLog(db_name, false, "Legacy implicite login: " + DebugTitle() + " FFeatureSelectWord=" + FFeatureSelectWord + " auth_ok=" + WasAuthorized);
     }
 
+    private void ParseLoginOptions(String _the_options) {
+
+        StringList tmp_opt_list = new StringList(_the_options.split(" "));
+        for (int i = tmp_opt_list.size() - 1; i >= 0; i--) if (tmp_opt_list.get(i).trim().isEmpty()) tmp_opt_list.remove(i);
+        //System.out.println("[DEBUG] ParseLoginOptions(" + _the_options + ")");
+
+        for (int i = 0; i < tmp_opt_list.size(); i++)  {
+
+            //System.out.println("[DEBUG] tmp_opt_list[" + i + "]=" + tmp_opt_list.get(i));
+            if (tmp_opt_list.get(i).trim().equals("filtered")) published_only = true; // YYY
+            else FLoginOptionsWarning = FLoginOptionsWarning + "Note: login option '" + tmp_opt_list.get(i).trim() + "' was not recogized." + HandyMisc.crlf;
+        }
+    }
+
     private void Process_UserLogin(byte thrd_ctx, byte[] req_body, int req_trailing_len, boolean simp_crypt) throws Exception {
 
         int tmp_src_ofs = 0;
@@ -1162,22 +1224,26 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             for (int tmp_i = 0; tmp_i < tmp_src_len; tmp_i++) req_body[tmp_i+5] = (byte)(((short)decrypt_arr[((short)req_body[tmp_i+5] & (short)0xFF)] - (short)tmpRandSalt) & 0xFF);
         }
 
-        String[] tmp_strings = Tum3Util.FetchAsStrings(req_body, tmp_src_len, 2, 0, tmp_src_ofs);
+        String[] tmp_strings = Tum3Util.FetchAsStrings(req_body, tmp_src_len, 3, 0, tmp_src_ofs);
         OutgoingBuff tmpBuff = null;
 
-        if (tmp_strings.length != 2) {
+        if (tmp_strings.length < 2) { // YYY
             Tum3Logger.DoLog(db_name, false, "Internal error: invalid login request format." + " Session: " + DebugTitle());
             throw new Exception("FATAL: invalid login request format");
         }
-        //System.out.println("[DEBUG] tmp_src_ofs=" + tmp_src_ofs + "[0]=" + tmp_strings[0] +  "[1]=" + tmp_strings[1]);
+        //System.out.println("[DEBUG] tmp_strings.length=" + tmp_strings.length);
 
         boolean tmp_ok = CheckValidLogin(tmp_strings[0], tmp_strings[1]);
 
+        if (tmp_ok && (tmp_strings.length >= 3)) ParseLoginOptions(tmp_strings[2]); // YYY
         tmpBuff = GetBuff(thrd_ctx, null);
         tmpBuff.InitSrvReply(REQUEST_TYPE_USERLOGINREPLY, AuthorizedLogin.length()+1, AuthorizedLogin.length()+1);
         tmpBuff.putString(AuthorizedLogin);
         tmpBuff.putByte((byte)0);
         PutBuff(thrd_ctx, tmpBuff, null);
+
+        if (!FLoginOptionsWarning.isEmpty())
+            _NewMessageBoxCompat(thrd_ctx, FLoginOptionsWarning, false); // YYY
 
         if (tmp_ok) {
             WasAuthorized = true;
@@ -1609,13 +1675,25 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             PutBuff(thrd_ctx, tmpBuff, null);
             //System.out.println("[DEBUG] DB_EV_USERLIST: " + tmp_size);
         } else if (_ev_type == _ev.DB_EV_NEWSHOT) {
-            String tmpMsg = _ev.get_str();
             tmpBuff = GetBuff(thrd_ctx, null);
-            if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
-            tmpBuff.InitSrvReply(REQUEST_TYPE_TRACEINVALIDATEONE, 1 + 4*1 + tmpMsg.length(), 1 + 4*1 + tmpMsg.length());
-            tmpBuff.putByte((byte)tmpMsg.length());
-            tmpBuff.putString(tmpMsg);
-            tmpBuff.putInt(0);
+            if (_ev.get_int() == _ev.IS_PUBLISHING) {
+                StringList tmp_notify_list = (StringList)_ev.get_handler();
+                int tmp_total = 0;
+                for (String tmp_str: tmp_notify_list) tmp_total += 1 + 4*1 + tmp_str.length();
+                tmpBuff.InitSrvReply(REQUEST_TYPE_INVALIDATEMANY, tmp_total, tmp_total);
+                for (String tmp_str: tmp_notify_list) {
+                    tmpBuff.putByte((byte)tmp_str.length());
+                    tmpBuff.putString(tmp_str);
+                    tmpBuff.putInt(0);
+                }
+            } else {
+                String tmpMsg = _ev.get_str();
+                if (tmpMsg.length() > 100) tmpMsg = tmpMsg.substring(0, 100);
+                tmpBuff.InitSrvReply(REQUEST_TYPE_TRACEINVALIDATEONE, 1 + 4*1 + tmpMsg.length(), 1 + 4*1 + tmpMsg.length());
+                tmpBuff.putByte((byte)tmpMsg.length());
+                tmpBuff.putString(tmpMsg);
+                tmpBuff.putInt(0);
+            }
             PutBuff(thrd_ctx, tmpBuff, null);
             //System.out.println("[DEBUG] REQUEST_TYPE_TRACEINVALIDATEONE <" + tmpMsg + "> in " + db_name + " sent OK.");
         } else if (_ev_type == _ev.DB_EV_UGC_SHOT_UPD) {
@@ -1691,7 +1769,8 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
 
         //if (tmp_ev_type == ev.DB_EV_NEWSHOT) System.out.println("[DEBUG] AddGeneralEvent: " + ev.get_str() + " in " + db_name);
 
-        if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && (origin_db != dbLink) /* && (origin_db != dbLink.GetMasterDb()) */ ) return; // YYY Special case: never allow DB_EV_NEWSHOT between master/slave directly.
+        if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && (origin_db != dbLink) /* && (origin_db != dbLink.GetMasterDb()) */ ) return; // Special case: never allow DB_EV_NEWSHOT between master/slave directly.
+        if ((tmp_ev_type == ev.DB_EV_NEWSHOT) && ((ev.get_int() == ev.IS_PUBLISHING) != published_only)) return; // YYY Publishing event has int=1 and is uninteresting in non-filtered mode.
 
         if (RCompatVersion == 0) { // This is a legacy acquisition node (most probably).
             if ((tmp_ev_type == ev.DB_EV_TALK) 
@@ -1781,7 +1860,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         if ((REQUEST_TYPE_REPORTAVAILVERSION == req_code) || (REQUEST_TYPE_REPORTAVAILVERSION_FULL == req_code) || (REQUEST_TYPE_REPORTAVAILVERSION_64 == req_code) || (REQUEST_TYPE_REPORTAVAILVERSION_FULL_64 == req_code)) 
             Process_ReportAvailVer(thrd_ctx, null, req_code);
         else if (REQUEST_TYPE_SENDMEPROGRAMFILE == req_code) Process_AppUpdate(thrd_ctx, null);
-        else if ((REQUEST_TYPE_USERLOGIN == req_code) || (REQUEST_TYPE_USERLOGINX == req_code)) Process_UserLogin(thrd_ctx, req_body, req_trailing_len, (REQUEST_TYPE_USERLOGINX == req_code));
+        else if (/* (REQUEST_TYPE_USERLOGIN == req_code) || */ (REQUEST_TYPE_USERLOGINX == req_code)) Process_UserLogin(thrd_ctx, req_body, req_trailing_len, (REQUEST_TYPE_USERLOGINX == req_code));
         else if ((REQUEST_TYPE_UPLOAD_ONE == req_code) || (REQUEST_TYPE_UPLOAD_ONE_VAR == req_code)) Process_UploadOne(thrd_ctx, req_body, req_trailing_len, null, REQUEST_TYPE_UPLOAD_ONE_VAR == req_code);
         else if (REQUEST_TYPE_DELETE_ONE_VAR == req_code) Process_DeleteOne(thrd_ctx, req_body, req_trailing_len, null);
         else if (REQUEST_TYPE_UPLOAD_END_HINT == req_code) Process_UploadEndHint();
@@ -1795,6 +1874,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         else if (REQUEST_TYPE_REFUSE    == req_code) Process_GetTrace(thrd_ctx, req_body, req_trailing_len, true);
         else if (REQUEST_TYPE_CONFIGSCALL == req_code) Process_GetConfigs(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_REQUEST_FILES == req_code) Process_ReqFiles(thrd_ctx, req_body, req_trailing_len); 
+        else if (REQUEST_TYPE_PUBLISH_SHOTS == req_code) Process_PublishShots(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_GET_MISC == req_code) Process_GetMiscInfos(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_CONFIGSSAVE == req_code) Process_ConfigsSave(thrd_ctx, req_body, req_trailing_len);
         else if (REQUEST_TYPE_DENSITY_UPD == req_code) Process_DensitySave(thrd_ctx, req_body, req_trailing_len);
@@ -1845,10 +1925,10 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         } catch (Exception e) {
             return tmp_err_prefix + e;
         }
-        if (tmp_shot == null) return tmp_err_prefix + CONST_MSG_SRVLINK_ERR01;
+        if (tmp_shot == null) return tmp_err_prefix + Tum3Db.CONST_MSG_SRVLINK_ERR01;
         if ((null == tmp_shot.GetDb()) || ((tmp_shot.GetDb() != dbLink) && (tmp_shot.GetDb() != dbLink.GetMasterDb()))) {
             tmp_shot.ShotRelease();
-            return tmp_err_prefix + CONST_MSG_SRVLINK_ERR02;
+            return tmp_err_prefix + Tum3Db.CONST_MSG_SRVLINK_ERR02;
         }
         Tum3Perms tmp_perm = UserPermissions;
         if (tmp_shot.GetDb() == dbLink.GetMasterDb())
@@ -1889,6 +1969,7 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
     }
 
     private String UploadOne(String _shot_name, int _signal_id, ByteBuffer _header, ByteBuffer _body, boolean DataIsVolatile) {
+    // See also: Tum3Db.ExternalPutTrace_int()
 
         String tmp_name = "signal id <" + _signal_id + ">";
         String tmp_err_prefix = "Could not store " + tmp_name + " of " + _shot_name + ": ";
@@ -1908,10 +1989,10 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         } catch (Exception e) {
             return tmp_err_prefix + e;
         }
-        if (tmp_shot == null) return tmp_err_prefix + CONST_MSG_SRVLINK_ERR01;
+        if (tmp_shot == null) return tmp_err_prefix + Tum3Db.CONST_MSG_SRVLINK_ERR01;
         if ((null == tmp_shot.GetDb()) || ((tmp_shot.GetDb() != dbLink) && (tmp_shot.GetDb() != dbLink.GetMasterDb()))) {
             tmp_shot.ShotRelease();
-            return tmp_err_prefix + CONST_MSG_SRVLINK_ERR02;
+            return tmp_err_prefix + Tum3Db.CONST_MSG_SRVLINK_ERR02;
         }
         Tum3Perms tmp_perm = UserPermissions;
         if (tmp_shot.GetDb() == dbLink.GetMasterDb())
@@ -1977,10 +2058,10 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
         } catch (Exception e) {
             return tmp_err_prefix + e;
         }
-        if (tmp_shot == null) return tmp_err_prefix + CONST_MSG_SRVLINK_ERR01;
+        if (tmp_shot == null) return tmp_err_prefix + Tum3Db.CONST_MSG_SRVLINK_ERR01;
         if ((null == tmp_shot.GetDb()) || (tmp_shot.GetDb() != dbLink)) {
             tmp_shot.ShotRelease();
-            return tmp_err_prefix + CONST_MSG_SRVLINK_ERR02;
+            return tmp_err_prefix + Tum3Db.CONST_MSG_SRVLINK_ERR02;
         }
 
         if (!tmp_shot.isWriteable || !Tum3cfg.isWriteable(db_index)) { // YYY

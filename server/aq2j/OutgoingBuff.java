@@ -84,6 +84,28 @@ public class OutgoingBuff implements TumProtoConsts, OutBuffData {
         byte_buff.putInt(tmp_total_trailing);
     }
 
+    public void InitSrvReply(int fullSize) {
+
+        curr_size_total = fullSize - 8;
+        curr_sent_count = 0;
+        in_continuator = false;
+        curr_continuator = null;
+        curr_continuator_len = 0;
+        curr_trace_size = 0;
+        curr_trace_number = 0;
+
+        if (real_buff != null) if (real_buff.length < fullSize) real_buff = null;
+        if (real_buff == null) {
+            int tmp_size = fullSize;
+            if (tmp_size < const_min_out_buff) tmp_size = const_min_out_buff;
+            real_buff = new byte[tmp_size];
+            byte_buff = ByteBuffer.wrap(real_buff);
+            byte_buff.order(ByteOrder.LITTLE_ENDIAN);
+        } else {
+            byte_buff.clear();
+        }
+    }
+
     public void SetSegment(long _seg_ofs, int _seg_size, boolean _is_last_seg) {
 
         seg_ofs = _seg_ofs;

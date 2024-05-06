@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2021 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -67,13 +67,6 @@ public class ShotWriteHelper implements ShotChangeMonitor {
         return curr_shot;
 
     }
-    /*
-    public Tum3Shot setShot(String new_shot_name) throws Exception {
-
-      return setShot(dbPrimaryLink.getShot(new_shot_name, true));
-
-    }
-     */
 
     public void AddUpdatedId(int _id, boolean _hurry, boolean _was_waiting, boolean _was_removed) throws Exception {
 

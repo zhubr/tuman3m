@@ -469,7 +469,7 @@ public class Tum3Shot {
     private volatile int UserCount = 0;
     private volatile long LastUsedAt = 0;
     private volatile boolean NotStored, Valid = false;
-    private Object CreationLock;
+    private final Object CreationLock = new Object(); // YYY
     private UtilCreateFile1 FF;
     private int DirOffset = 0;
     private NewHeaderClass NewHeader;
@@ -479,7 +479,7 @@ public class Tum3Shot {
     private volatile int[] expected_ids = null;
 
     private final static int min_hlen_ever = 32; // YYY
-    private final static int min_hlen_Fmt64Ver = 336; // YYY
+    public  final static int min_hlen_Fmt64Ver = 336; // YYY
     private final static int ofs_HDataSize_old = 4*7; // YYY
     private final static int ofs_HDataSize_new = 328; // YYY
     private final static int ofs_HMetaDataSize_old = 304; // YYY
@@ -672,6 +672,7 @@ public class Tum3Shot {
     }
 
     public Tum3Shot(Tum3Db this_db, String this_path_main, String this_path_vol, String this_subdir, String this_shot_name, boolean as_new, String puff_program, int[] _expected_ids, ByteArrayOutputStream aq_zip_configs) {
+    // Note. New shot must not be created unless as_new=true was specified.
 
         parent_db = this_db;
         isWriteable = parent_db.isWriteable; // Tum3cfg.isWriteable(parent_db.getIndex()); // YYY
@@ -684,7 +685,7 @@ public class Tum3Shot {
         new_zip_configs = aq_zip_configs;
         expected_ids = _expected_ids;
 
-        CreationLock = new Object();
+        //CreationLock = new Object(); // YYY Moved to declaration
         //System.out.println("[aq2j] DEBUG: Created Tum3Shot(" + shotPathMain + ", " + shotPathVol + ", " + shotName + ")");
 
     }
@@ -742,7 +743,7 @@ public class Tum3Shot {
                 if (is_new) {
                     CreateNew();
                 } else {
-                    Valid = true;
+                    //Valid = true; // YYY
                 }
                 return;
             }
@@ -899,8 +900,13 @@ public class Tum3Shot {
 
             File tmp_f = new File(tmp_cmn_fname);
             if (tmp_f.isFile()) {
-                if (!tmp_f.renameTo(new File(tmp_dest_name)))
-                    throw new Exception("Failed to rename config zip from '" + tmp_cmn_fname + "' to '" + tmp_dest_name + "'");
+                File tmp_final_file = new File(tmp_dest_name);
+                if (!tmp_f.renameTo(tmp_final_file))
+                    throw new Exception("Failed to rename shot header file from '" + tmp_cmn_fname + "' to '" + tmp_dest_name + "'"); // YYY
+                else {
+                    if (parent_db.writeprotect_storage) if (!tmp_final_file.setWritable(false)) // YYY
+                        Tum3Logger.DoLog(DbName(), true, "CreateNew: setting R/O " + tmp_dest_name + " failed."); // YYY
+                }
             } else {
                 throw new Exception("Storing failed: config zip in '" + tmp_cmn_fname + "' failed to appear");
             }
@@ -936,8 +942,14 @@ public class Tum3Shot {
             if (fos != null) fos.close();
             File tmp_f = new File(tmp_fname);
             if (tmp_f.isFile()) {
-                if (!tmp_f.renameTo(new File(tmp_dest_name2)))
+                File tmp_final_file = new File(tmp_dest_name2);
+                if (!tmp_f.renameTo(tmp_final_file))
                     Tum3Logger.DoLog(DbName(), true, "IMPORTANT: failed to rename config zip from '" + tmp_fname + "' to '" + tmp_dest_name2 + "'");
+                else {
+                    if (parent_db.writeprotect_storage) if (!tmp_final_file.setWritable(false)) // YYY
+                        Tum3Logger.DoLog(DbName(), true, "CreateNew: setting R/O " + tmp_dest_name2 + " failed."); // YYY
+                }
+
             } else {
                 Tum3Logger.DoLog(DbName(), true, "IMPORTANT: config zip in '" + tmp_fname + "' failed to appear");
             }
@@ -1155,7 +1167,7 @@ public class Tum3Shot {
 
     public static void insertHostName(ByteBuffer _header, String _host_name) throws Exception {
 
-        if (_header.remaining() < (9*4+256)) throw new Exception("UnifiedTraceHeader butebuffer is suspicuously small");
+        if (_header.remaining() < (9*4+256)) throw new Exception("UnifiedTraceHeader butebuffer is suspiciously small");
 
         _header.position(9*4);
         int HComment1_len = 0xFF & _header.get();
@@ -1762,7 +1774,10 @@ public class Tum3Shot {
                 Tum3Logger.DoLogGlb(true, "Warning: <" + shotName + "> was detached with UserCount=" + tmp_user_count);
         }
 
-        CreationLock = null;
+        //CreationLock = null; // YYY
+        synchronized(CreationLock) { // YYY
+            if (!creation_complete) creation_complete = true; // YYY
+        }
         NewHeader = null;
         if (null != FF) {
             FF.close();
