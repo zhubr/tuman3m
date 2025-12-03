@@ -1,5 +1,5 @@
 (*
- * Copyright 2003-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2003-2024 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost
@@ -38,11 +38,12 @@ const
   { REQUEST_TYPE_FORCETRIG = $72; } { Obsolete, not supported. }
   REQUEST_TYPE_AQ2EXTENDED = $73;
   REQUEST_TYPE_TRACEINVALIDATEONE = $74;
+  REQUEST_TYPE_INVALIDATEMANY = $B4; { YYY }
   { REQUEST_TYPE_TRACEUPLOADONE = $75; } { YYY Obsolete, use REQUEST_TYPE_UPLOAD_ONE instead. } 
   REQUEST_TYPE_TRACEUPLOADACK = $76;
   REQUEST_TYPE_AQ2CANCEL = $77;
   REQUEST_TYPE_FEATURESELECT = $78;
-  REQUEST_TYPE_USERLOGIN = $79;
+  { REQUEST_TYPE_USERLOGIN = $79; } { YYY Obsolete, use REQUEST_TYPE_USERLOGINX instead. }
   REQUEST_TYPE_USERLOGINREPLY = $7A;
   REQUEST_TYPE_REPORTAVAILVERSION = $7B;
   REQUEST_TYPE_AVAILVERSION = $7C;
@@ -106,10 +107,18 @@ const
   REQUEST_TYPE_TRIG_ALLOW = $A9;
 
   REQUEST_TYPE_REQUEST_FILES = $AA;
-  REQUEST_TYPE_UGC_REQ = $AB; { YYY }
-  REQUEST_TYPE_UGC_REP = $AC; { YYY }
+  REQUEST_TYPE_UGC_REQ = $AB;
+  REQUEST_TYPE_UGC_REP = $AC;
 
-  REQUEST_TYPE_JSON = $AD; { YYY }
+  REQUEST_TYPE_JSON = $AD;
+  REQUEST_TYPE_JSON_WBIN = $AE;
+  REQUEST_TYPE_SERVERINFO = $AF;
+
+  REQUEST_TYPE_FPART_TRNSF = $B0; { YYY }
+  REQUEST_TYPE_FPART_CNFRM = $B1; { YYY }
+
+  REQUEST_TYPE_PUBLISH_SHOTS = $B2; { YYY }
+  REQUEST_TYPE_PUBLISH_RSLT  = $B3; { YYY }
 
   DTYPE_SmallInt = 50; { 16-bit, signed integer }
   DTYPE_Single   = 51; { 32-bit, floating point }
@@ -185,6 +194,7 @@ const
   max_hlen_legacy   = 316; { YYY }
   min_hlen_Fmt64Ver = 336; { YYY }
   hdr64_default = {$IFDEF HDR64_DEFAULT } true {$ELSE } false {$ENDIF}; { YYY }
+  hdr_meta_ofs = {$IFDEF HDR64_DEFAULT } 400 {$ELSE } 308 {$ENDIF}; { YYY }
 
 
 function DataPointSize(_Dtype: integer): integer;
@@ -349,7 +359,7 @@ type
     RCompatFlags: longint; { YYY }
   end;
 
-function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUnifiedTraceHeader): double;
+function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUniTraceHdrIntrnl): double; { YYY }
 function ConvertFrom64(src: PUnifiedTraceHdr64; dst: PUnifiedTraceHeader): boolean; { YYY }
 function ConvertTo64(src: PUnifiedTraceHeader; dst: PUnifiedTraceHdr64): boolean; { YYY }
 procedure PreInitHdr(phdr: PUniTraceHdrIntrnl); { YYY }
@@ -369,7 +379,7 @@ type
   SmallInt = Integer;
 {$ENDIF }
 
-function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUnifiedTraceHeader): double;
+function DataGetAsDouble(_data: pointer; _ind: longint; _ph: PUniTraceHdrIntrnl): double;
 type
   TSmallIntArr = packed array [0.. 1] of SmallInt;
   TLongintArr = packed array [0.. 1] of Longint;
@@ -489,6 +499,7 @@ begin
   with phdr^ do
   begin
     HUseFmt64Ver := 1;
+    H64Zero_01 := 0; { YYY }
     H64Rsrvd_01 := 0;
     H64Ones_04 := -1;
     H64Ones_05 := -1;

@@ -43,7 +43,7 @@ type
   TNg2Writer = object(TTumDbWriter)
     constructor Init;
     function ResOpen(_FName: string): boolean; virtual;
-    function  ResBegin(_Id: longint; var _Header: TUnifiedTraceHeader): boolean; virtual;
+    function  ResBegin(_Id: longint; _pHeader: PUnifiedTraceHeader): boolean; virtual;
     procedure ResWriteData(var Buff; Cnt, Base: longint); virtual;
     procedure ResClose; virtual;
     procedure AutoCreateMaster; virtual;
@@ -152,7 +152,7 @@ begin
 end;
 
 
-function TNg2Writer.ResBegin(_Id: longint; var _Header: TUnifiedTraceHeader): boolean;
+function TNg2Writer.ResBegin(_Id: longint; _pHeader: PUnifiedTraceHeader): boolean;
 label
   sf_err_exit;
 var
@@ -180,8 +180,8 @@ begin
 
   if FpEntryHeader <> nil then
     FreeMem(FpEntryHeader, FpEntryHeader^.HSize);
-  GetMem(FpEntryHeader, _Header.HSize);
-  Move(_Header, FpEntryHeader^, _Header.HSize);
+  GetMem(FpEntryHeader, _pHeader.HSize);
+  Move(_pHeader^, FpEntryHeader^, _pHeader.HSize);
 
  { FEntryHeader.HZeroline := - FEntryHeader.HZeroline; } { XXX fixme !!! }
   FDataSize := FpEntryHeader^.HDataSize;
@@ -203,11 +203,11 @@ begin
   if Success then
     BlockWrite(FileDat, tmpFirstHeader, tmpFirstHeader.HSize, i);
   Success := Success and (i = tmpFirstHeader.HSize);
-  tmpHeaderFill := _header.HSize;
+  tmpHeaderFill := _pHeader.HSize;
   if Success then
-    BlockWrite(FileDat, _header, tmpHeaderFill, i);
+    BlockWrite(FileDat, _pHeader^, tmpHeaderFill, i);
   Success := Success and (i = tmpHeaderFill);
-  FDataSize := _header.HDataSize;
+  FDataSize := _pHeader.HDataSize;
   DataStartPos := 4 + tmpFirstHeader.HSize + tmpHeaderFill;
   FStartedWriting := true;
   result := true;

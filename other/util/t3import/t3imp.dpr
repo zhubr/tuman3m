@@ -90,6 +90,7 @@ var
   sig_txt: text;
   byte_count: longint;
   temp_buff: packed array of single;
+  temp_buff2: packed array of byte;
 begin
   sig_list := TList.Create;
   temp_params := TStringList.Create;
@@ -146,6 +147,8 @@ begin
 
               if temp_val = 'single' then
                 p.RHeader.HType := DTYPE_Single
+              else if temp_val = 'smallint' then
+                p.RHeader.HType := DTYPE_SmallInt
               else
                 raise Exception.Create('Template error: unsupported type ' + temp_val);
             end
@@ -199,12 +202,15 @@ begin
       begin
         assign(sig_bin, sig_fname); reset(sig_bin, 1);
         byte_count := FileSize(sig_bin);
+        RHeader.HDataSize := byte_count; // YYY
         if RHeader.HType = DTYPE_Single then
           RHeader.HCount := byte_count shr 2
+        else if RHeader.HType = DTYPE_SmallInt then
+          RHeader.HCount := byte_count shr 1
         else
           raise Exception.Create('Internal error: unsupported data type ' + IntToStr(RHeader.HType));
-        SetLength(temp_buff, RHeader.HCount);
-        BlockRead(sig_bin, temp_buff[0], RHeader.HCount * 4);
+        SetLength(temp_buff2, { RHeader.HCount } byte_count);
+        BlockRead(sig_bin, temp_buff2[0], { RHeader.HCount * 4 } RHeader.HDataSize);
         close(sig_bin);
         IOResult;
       end
@@ -237,12 +243,16 @@ begin
         close(sig_txt);
         IOResult;
       end;
+
     RHeader.HSize := SizeOf(RHeader);
     RHeader.HDataSize := DataPointSize(RHeader.HType) * RHeader.HCount;
 
-    if not MyResWriter.ResBegin(Rid, RHeader) then
+    if not MyResWriter.ResBegin(Rid, @RHeader) then
       tmp_errors := tmp_errors + 'Error in ResBegin(a) for id ' + IntToStr(Rid) + #13#10;
-    MyResWriter.ResWriteData(temp_buff[0], RHeader.HCount, 0);
+    if RFileIsBin then
+      MyResWriter.ResWriteData(temp_buff2[0], RHeader.HCount, 0)
+    else
+      MyResWriter.ResWriteData(temp_buff[0], RHeader.HCount, 0);
   end;
 
   MyResWriter.ResClose;
@@ -268,5 +278,5 @@ begin
     writeln('usage: t3imp <template.t3i> <shotnumber> [legacy]');
     exit;
   end;
-  DoWork(ParamStr(1), ParamStr(2), ParamStr(3) <> 'legacy'); //readln;
+  DoWork(ParamStr(1), ParamStr(2), LowerCase(trim(ParamStr(3))) <> 'legacy'); //readln;
 end.
