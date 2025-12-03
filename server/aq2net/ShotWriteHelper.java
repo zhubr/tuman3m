@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2024 Nikolai Zhubr <zhubr@rambler.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
