@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2023 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2025 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -25,12 +25,14 @@ public class Tum3cfg {
 
     private final static String TUM3_CFG_dblist = "dblist";
     public  final static String TUM3_CFG_db_root = "db_root"; // Moved from tum3db
+    public  final static String TUM3_CFG_compat_conf = "compat_conf"; // YYY
     public  final static String TUM3_CFG_web_enabled = "web_enabled";
     public  final static String TUM3_CFG_downlink_enabled = "downlink_enabled";
     public  final static String TUM3_CFG_downbulk_enabled = "downlink_bulk_enabled";
     public  final static String TUM3_CFG_uplink_enabled = "uplink_enabled";
     public  final static String TUM3_CFG_upbulk_enabled = "uplink_bulk_enabled";
     public  final static String TUM3_CFG_tcp_enabled = "tcp_enabled";
+    public  final static String TUM3_CFG_reject_old_header = "reject_old_header"; // YYY
 
     public  final static String TUM3_CFG_uplink_serv_addr = "uplink_serv_addr";
     public  final static String TUM3_CFG_upbulk_serv_addr = "uplink_bulk_serv_addr"; // YYY
@@ -57,14 +59,15 @@ public class Tum3cfg {
     public class DbCfg {
 
         private String db_name;
-        private boolean db_web_enabled, db_tcp_enabled, db_downlink_enabled, db_downbulk_enabled, db_uplink_enabled, db_upbulk_enabled, db_is_writeable; // YYY
+        private boolean db_web_enabled, db_tcp_enabled, db_reject_old_header, db_downlink_enabled, db_downbulk_enabled, db_uplink_enabled, db_upbulk_enabled, db_is_writeable; // YYY
         private Properties db_props;
 
-        public DbCfg(String _db_name, boolean _web_enabled, boolean _tcp_enabled, boolean _downlink_enabled, boolean _downbulk_enabled, boolean _uplink_enabled, boolean _upbulk_enabled, boolean _is_writeable, Properties _db_props) {
+        public DbCfg(String _db_name, boolean _web_enabled, boolean _tcp_enabled, boolean _reject_old_header, boolean _downlink_enabled, boolean _downbulk_enabled, boolean _uplink_enabled, boolean _upbulk_enabled, boolean _is_writeable, Properties _db_props) {
 
             db_name = _db_name;
             db_web_enabled = _web_enabled;
             db_tcp_enabled = _tcp_enabled;
+            db_reject_old_header = _reject_old_header; // YYY
             db_downlink_enabled = _downlink_enabled;
             db_downbulk_enabled = _downbulk_enabled; // YYY
             db_is_writeable = _is_writeable; // YYY
@@ -122,6 +125,8 @@ public class Tum3cfg {
                     if (!db_props.getProperty(TUM3_CFG_db_root, "").isEmpty()) {
                         boolean tmp_web_enabled = "1".equals(db_props.getProperty(TUM3_CFG_web_enabled, "1").trim());
                         boolean tmp_tcp_enabled = "1".equals(db_props.getProperty(TUM3_CFG_tcp_enabled, "1").trim());
+                        boolean tmp_reject_old_header = "1".equals(db_props.getProperty(TUM3_CFG_reject_old_header, config_props.getProperty(TUM3_CFG_reject_old_header, "0")).trim()); // YYY
+                        //System.out.println("[DEBUG] tmp_reject_old_header=<" + tmp_reject_old_header + ">");
                         boolean tmp_downlink_enabled = "1".equals(db_props.getProperty(TUM3_CFG_downlink_enabled, "0").trim());
                         boolean tmp_downbulk_enabled = "1".equals(db_props.getProperty(TUM3_CFG_downbulk_enabled, "0").trim()); // YYY
                         boolean tmp_uplink_enabled = "1".equals(db_props.getProperty(TUM3_CFG_uplink_enabled, "0").trim());
@@ -141,7 +146,7 @@ public class Tum3cfg {
                             tmp_is_writeable = false; // YYY
                             Tum3Logger.println("Warning: disabling 'writeable' for database <" + tmp_db_list[tmp_i] + "> because it has a downlink.");
                         }
-                        if (tmp_web_enabled || tmp_tcp_enabled || tmp_downlink_enabled || tmp_downbulk_enabled || tmp_uplink_enabled || tmp_upbulk_enabled) db_configs.add(new DbCfg(tmp_db_list[tmp_i], tmp_web_enabled, tmp_tcp_enabled, tmp_downlink_enabled, tmp_downbulk_enabled, tmp_uplink_enabled, tmp_upbulk_enabled, tmp_is_writeable, db_props));
+                        if (tmp_web_enabled || tmp_tcp_enabled || tmp_downlink_enabled || tmp_downbulk_enabled || tmp_uplink_enabled || tmp_upbulk_enabled) db_configs.add(new DbCfg(tmp_db_list[tmp_i], tmp_web_enabled, tmp_tcp_enabled, tmp_reject_old_header, tmp_downlink_enabled, tmp_downbulk_enabled, tmp_uplink_enabled, tmp_upbulk_enabled, tmp_is_writeable, db_props));
                     }
                 } catch (Exception e) {
                     Tum3Logger.println("Warning: config not present or invalid for database <" + tmp_db_list[tmp_i] + ">: " + e);
@@ -195,6 +200,12 @@ public class Tum3cfg {
     public boolean getDbDownBulkEnabled(int _db_idx) {
 
         return db_configs.get(_db_idx).db_downbulk_enabled;
+
+    }
+
+    public static boolean getDbRejectOldSignHeader(int _db_idx) {
+
+        return getGlbInstance().db_configs.get(_db_idx).db_reject_old_header;
 
     }
 

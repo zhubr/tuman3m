@@ -194,6 +194,8 @@ public class Tum3UgcWorker {
 
         if (!ugc_enabled) return "UGC subsystem not enabled or failed to start";
         if (_shot_name.length() > ShotNameHolder.CONST_SHOT_NAME_LIMIT) return "Shot name exceeds CONST_SHOT_NAME_LIMIT";
+        if (_shot_name.length() < 8) return "Shot name is too small"; // YYY
+        if (!Tum3Util.StrNumeric(_shot_name.substring(6))) return "Shot name is not valid for common storage"; // YYY
 
         //StringList tmp_upd_strs = new StringList(Tum3Util.BytesToStringRaw(_upd_arr, 0, _upd_arr.length).split("\r\n"));
         Tum3UgcUpdParser tmp_upd_parser = new Tum3UgcUpdParser(UserName, new StringList(Tum3Util.BytesToStringRaw(_upd_arr, 0, _upd_arr.length).split("\r\n")));

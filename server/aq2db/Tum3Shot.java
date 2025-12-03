@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2025 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -1184,6 +1184,22 @@ public class Tum3Shot {
 
     }
 
+    public static boolean HeaderIs64bit(ByteBuffer _header) {
+
+    boolean result = false;
+
+        //System.out.println("[DEBUG] in HeaderIs64bit()");
+
+        if (_header.remaining() < min_hlen_Fmt64Ver) return false;
+
+        _header.position(12*4+256); // old HMetaDataSize
+        if (0 == _header.getInt()) result = true;
+        _header.position(0);
+
+        return result;
+
+    }
+
     private void SyncStatusVolOpBegin(int _ID, int _op_type) throws Exception {
 
         parent_db.SyncStatusVolOpBegin(shotSubdir, shotName, _ID, _op_type);
@@ -1209,7 +1225,7 @@ public class Tum3Shot {
         boolean tmp_with_rename = true; // YYY
         boolean tmp_already_stored = false; // YYY
         boolean tmp_store_ok = false;
-        String tmp_target_fname = "";
+        //String tmp_target_fname = ""; // YYY
 
         synchronized(CacheIds) {
             byte tmp_cache_val = 0;
@@ -1251,10 +1267,11 @@ public class Tum3Shot {
             if (!tmp_monthdir.exists()) try { tmp_monthdir.mkdir(); } catch (Exception ignored) {} else tmp_monthdir = null; // YYY
             if (!tmp_shotdir.exists()) try { tmp_shotdir.mkdir(); } catch (Exception ignored) {} else tmp_shotdir = null; // YYY
         }
-        String tmp_new_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_NORMAL;
+        final String tmp_target_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_NORMAL; // YYY
+        String tmp_new_fname = tmp_target_fname;
         File tmp_final_file = new File(tmp_new_fname); // YYY
         if (tmp_with_rename) {
-            tmp_target_fname = tmp_new_fname;
+            //tmp_target_fname = tmp_new_fname; // YYY
             tmp_new_fname = tmpActualPath + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_TMPFILE;
         }
 
@@ -1408,6 +1425,7 @@ public class Tum3Shot {
                 tmp_was_waiting = RemoveFromExpected(_ThisID);
             }
             chgMonitor.AddUpdatedId(_ThisID, false, tmp_was_waiting, false);
+            if (tmp_store_ok) parent_db.CompatProcessData(shotName, _ThisID, tmp_as_volatile, false, tmp_target_fname); // YYY
 
             if (!tmp_store_ok) {
                 if (null != tmp_shotdir) if (tmp_shotdir.isDirectory()) tmp_shotdir.delete(); // YYY
@@ -1426,6 +1444,8 @@ public class Tum3Shot {
         byte tmp_ok_bit = 2, tmp_in_progress = 8;
         boolean tmp_delete_ok = false;
         boolean SyncStatusVolOpBegin_ok = false; // YYY
+        final String tmp_target_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_NORMAL; // YYY Moved here and made final.
+        final String tmp_bup_fname    = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID); // YYY
 
         synchronized(CacheIds) {
             byte tmp_cache_val = 0;
@@ -1440,8 +1460,6 @@ public class Tum3Shot {
             SyncStatusVolOpBegin(_ThisID, Tum3Db.SYNF_ERASE); // YYY
             SyncStatusVolOpBegin_ok = true; // YYY
 
-            String tmp_target_fname = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID) + FSUFF_NORMAL;
-            String tmp_bup_fname    = shotPathVol + shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID); // YYY
             File tmp_orig_file = new File(tmp_target_fname);
             File tmp_backup_file = new File(tmp_bup_fname + FSUFF_BUP_GENERAL);
             if (tmp_backup_file.exists()) tmp_backup_file.delete();
@@ -1478,6 +1496,7 @@ public class Tum3Shot {
                 else CacheIds.put(_ThisID, tmp_cache_val);
             }
             chgMonitor.AddUpdatedId(_ThisID, false, false, true);
+            if (tmp_delete_ok) parent_db.CompatProcessData(shotName, _ThisID, true, true, tmp_target_fname); // YYY
         }
 
     }
@@ -1522,12 +1541,12 @@ public class Tum3Shot {
             tmpActualPath = shotPathVol;
             //System.out.println("[aq2j] DEBUG: UpdateDensityData(): using volatile for '" + shotName + "' id=" + _ThisID);
         }
+        final String tmp_cmn_part = shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID); // YYY Moved here and made final.
+        final String tmp_std_fname =   tmpActualPath + tmp_cmn_part + FSUFF_NORMAL; // YYY Moved here and made final.
 
         boolean tmp_need_sync_end = false;
         try {
-            String tmp_cmn_part = shotSubdir + File.separator + shotName + File.separator + Tum3Db.SignalFName(_ThisID);
             String tmp_bup_fname =   tmpActualPath + tmp_cmn_part + FSUFF_BUP_DENSITY;
-            String tmp_std_fname =   tmpActualPath + tmp_cmn_part + FSUFF_NORMAL;
             String tmp_nonvol_fname = shotPathMain + tmp_cmn_part + FSUFF_NORMAL; // YYY
             String tmp_tmp_fname =   tmpActualPath + tmp_cmn_part + FSUFF_TMPFILE;
             boolean tmp_bup_ok = false;
@@ -1699,6 +1718,8 @@ public class Tum3Shot {
 
         if (tmp_writing_started) try {
             chgMonitor.AddUpdatedId(_ThisID, true, false, false);
+            if (tmp_result.isEmpty()) parent_db.CompatProcessData(shotName, _ThisID, tmp_as_volatile, false, tmp_std_fname); // YYY
+
         } catch (Exception e) {
             if (tmp_result.isEmpty()) tmp_result = "Internal error: " + Tum3Util.getStackTrace(e);
         }

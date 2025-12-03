@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2025 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2025 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -10,9 +10,12 @@
  * OF ANY KIND.
  *
  */
-package aq2db;
+package compatdef;
 
-public interface a
-{
-    public final static int CurrentVerNum = 470;
+
+
+public interface CompatLogger {
+
+    public void DoLog(boolean _IsCritical, String _MsgText);
+
 }

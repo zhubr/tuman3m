@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2025 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -20,6 +20,9 @@ import java.nio.file.attribute.*;
 
 import aq2net.Tum3Broadcaster;
 import aq2net.GeneralDbDistribEvent;
+
+import aq3svccompat.CompatRunner;
+
 
 public class Tum3Db implements Runnable, AppStopHook {
 
@@ -141,6 +144,7 @@ public class Tum3Db implements Runnable, AppStopHook {
     private volatile double[] bup_visible_rate_arr = {-1.0, -1.0, -1.0, -1.0};
     private final Object bup_syn_strange_lock = new Object(); // YYY
     private final Object bup_sync_status_lock = new Object(); // YYY
+    private CompatRunner compat_runner = null; // YYY
 
     private final boolean BUP_SYN_ERASE_WIPES = false; // Note: tested OK, but make little sense for real life.
 
@@ -453,6 +457,22 @@ public class Tum3Db implements Runnable, AppStopHook {
                     Tum3Logger.DoLog(db_name, false, "Note: no free space warning threshold was specified.");
                 //getPackedLastList();
                 //try { BupResetFrom("230419/15:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0;17:0000=0&1,0001=0,0002=0,0003=0,0004=0,0008=0,0011=0,0012=0,0013=0,0021=0,0022=0"); } catch(Exception ignored) {}
+
+                if (isWriteable) {
+                    String tmp_compat_conf_file = Tum3cfg.getParValue(db_index, false, Tum3cfg.TUM3_CFG_compat_conf); // YYY
+                    if (!tmp_compat_conf_file.isEmpty()) {
+                        if ((new File(tmp_compat_conf_file)).isFile()) {
+                            try {
+                                Properties compat_props = new Properties();
+                                compat_props.load(new FileInputStream(tmp_compat_conf_file));
+                                compat_runner = new CompatRunner(this, compat_props); // YYY
+                            } catch (Exception e) {
+                                Tum3Logger.DoLog(db_name, true, "Exception starting compatability service: " + Tum3Util.getStackTrace(e));
+                            }
+                        } else
+                            Tum3Logger.DoLog(db_name, true, "Invalid compatability config specified: " + tmp_compat_conf_file);
+                    }
+                }
             }
         }
     }
@@ -644,8 +664,13 @@ public class Tum3Db implements Runnable, AppStopHook {
             }
         }
 
-        if (tmp_match_only) return ManualTitle;
-        else return tmp_date_str + IncShotStr(tmp_max_suff); // Tum3Util.IntToStr2(tmp_max_num + 1);
+        String tmp_final_result;
+        if (tmp_match_only) tmp_final_result = ManualTitle;
+        else tmp_final_result = tmp_date_str + IncShotStr(tmp_max_suff); // Tum3Util.IntToStr2(tmp_max_num + 1);
+
+        if (compat_runner != null) compat_runner.AllocAltShotNum(tmp_final_result); // YYY
+
+        return tmp_final_result; // YYY
 
         //return "18010203";
 
@@ -2112,8 +2137,24 @@ public class Tum3Db implements Runnable, AppStopHook {
     public void RegisterNewShot(String _new_shot_num) { // YYY
 
         FAutoCreatedMonthDir = ""; // YYY  As soon as some shot triggered, we likely do not want to cleanup month directory anymore.
+        if (compat_runner != null) 
+            try {
+                compat_runner.ApplyAltShotNum(_new_shot_num); // YYY
+            } catch (Exception e) {
+                Tum3Logger.DoLog(db_name, true, "Unhandled failure in ApplyAltShotNum: " + Tum3Util.getStackTrace(e));
+            }
         synchronized(FGlobalShotList) { FGlobalShotList.add(_new_shot_num); }
 
+    }
+
+    public void CompatProcessData(String shot_num, int signal_id, boolean is_volatile, boolean was_deleted, String file_name) {
+
+        if (null == compat_runner) return;
+        try {
+            compat_runner.CompatProcessData(shot_num, signal_id, is_volatile, was_deleted, file_name);
+        } catch (Exception e) {
+            Tum3Logger.DoLog(db_name, true, "Unhandled failure in CompatProcessData: " + Tum3Util.getStackTrace(e));
+        }
     }
 
     public void setUplink(InterconInitiator _initiator) {
@@ -2400,6 +2441,10 @@ public class Tum3Db implements Runnable, AppStopHook {
             tmp_err_prefix = "Could not store " + tmp_name + " of " + _shot_name + ": ";
             if (!Tum3SignalList.AllowExtUpload(tmp_entry)) return tmp_err_prefix + "not allowed";
         }
+
+        if (Tum3cfg.getDbRejectOldSignHeader(_db_idx)) // YYY
+            if (!Tum3Shot.HeaderIs64bit(_header)) // YYY
+                return tmp_err_prefix + " obsolete header is prohibited"; // YYY
 
         Tum3Shot tmp_shot = null;
         try {

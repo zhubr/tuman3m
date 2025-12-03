@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2024 Nikolai Zhubr <zhubr@mail.ru>
+ * Copyright 2011-2025 Nikolai Zhubr <zhubr@mail.ru>
  *
  * This file is provided under the terms of the GNU General Public
  * License version 2. Please see LICENSE file at the uppermost 
@@ -85,7 +85,7 @@ public class SrvLink extends SrvLinkBase implements UgcReplyHandlerExt, aq3sende
         213, 126, 228, 60, 99, 87, 70, 194, 216, 93, 224, 214
     };
 
-    private final static int min_supported_app_ver = 428; // YYY
+    private final static int min_supported_app_ver = 469; // YYY
 
     private static volatile int dbg_serial = 0;
     public int my_dbg_serial = 0;
@@ -1982,6 +1982,10 @@ System.out.println("[DEBUG]: Process_GetConfigs2: <" + line.toString() + ">");
             tmp_err_prefix = "Could not store " + tmp_name + " of " + _shot_name + ": ";
             if (!Tum3SignalList.AllowExtUpload(tmp_entry)) return tmp_err_prefix + "not allowed";
         }
+
+        if (Tum3cfg.getDbRejectOldSignHeader(db_index)) // YYY
+            if (!Tum3Shot.HeaderIs64bit(_header)) // YYY
+                return tmp_err_prefix + " obsolete header is prohibited"; // YYY
 
         Tum3Shot tmp_shot = null;
         try {
